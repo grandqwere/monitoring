@@ -286,7 +286,14 @@ with right:
 plot_main(df, selected, axis_map, height=main_height)
 
 with st.expander("Первые 50 строк таблицы (по запросу)"):
-    st.dataframe(df.reset_index().rename(columns={"index": time_col}).head(50), use_container_width=True)
+    # Готовим таблицу без дубликатов столбца времени
+    tbl = df.copy()
+    # если столбец времени уже присутствует среди колонок — убираем его, оставим индекс как время
+    if time_col in tbl.columns:
+        tbl = tbl.drop(columns=[time_col])
+    # аккуратно переносим индекс (время) в отдельный столбец с нужным именем
+    tbl = tbl.reset_index(names=time_col)
+    st.dataframe(tbl.head(50), use_container_width=True)
 
 # ---------- НИЖЕ — ГРУППЫ СТЕКОМ ----------
 st.subheader("Групповые графики (стеком)")
