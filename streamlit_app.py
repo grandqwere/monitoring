@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from core import state
-from core.config import HIDE_ALWAYS, TIME_COL, DEFAULT_PRESET, PLOT_HEIGHT
+from core.config import HIDE_ALWAYS, DEFAULT_PRESET, PLOT_HEIGHT
 from core.data_io import read_csv_local
 from core.prepare import normalize
 from core.plotting import main_chart, group_panel
@@ -51,13 +51,35 @@ selected_main = st.multiselect(
     key="main_fields",
 )
 
-# Блок «Нормирование шкалы»: галочки на те серии, которым делаем отдельную ось слева
+# ---- Нормирование шкалы: максимум (len(selected_main) - 1) галочек ----
 st.markdown("**Нормирование шкалы** (отдельные шкалы слева для отмеченных трендов):")
 separate_set = set()
-for c in selected_main:
-    if st.checkbox(c, value=False, key=f"norm_{c}"):
-        separate_set.add(c)
+max_allowed = max(0, len(selected_main) - 1)
+checked_count = 0
 
+# чистим старые ключи чекбоксов, которых больше нет среди выбранных серий
+for k in list(st.session_state.keys()):
+    if k.startswith("norm_"):
+        col = k[5:]
+        if col not in selected_main:
+            del st.session_state[k]
+
+for c in selected_main:
+    prev_val = bool(st.session_state.get(f"norm_{c}", False))
+    disabled = (checked_count >= max_allowed) and (not prev_val)
+    val = st.checkbox(c, value=prev_val, key=f"norm_{c}", disabled=disabled)
+    if val:
+        separate_set.add(c)
+        checked_count += 1
+
+# на всякий случай: если по состоянию получилось равно количеству серий — снимем последнюю
+if len(separate_set) >= len(selected_main) and selected_main:
+    last = selected_main[-1]
+    if last in separate_set:
+        separate_set.remove(last)
+        st.session_state[f"norm_{last}"] = False
+
+# --- Рендер сводного графика ---
 fig_main = main_chart(
     df=df,
     series=selected_main,
@@ -67,7 +89,7 @@ fig_main = main_chart(
 )
 st.plotly_chart(fig_main, use_container_width=True, config={"responsive": True}, key="main")
 
-# =================== ГРУППЫ (фикс-названия, всё просто) ===================
+# =================== ГРУППЫ (фикс-названия) ===================
 
 # 1) Мощность: активная / полная / реактивная
 st.subheader("Мощность: активная / полная / реактивная")
