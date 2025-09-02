@@ -1,111 +1,126 @@
 from __future__ import annotations
-import plotly.graph_objects as go
-import pandas as pd
 from typing import Dict, List
+import pandas as pd
+import plotly.graph_objects as go
+from math import ceil
+
 from core.config import MAX_POINTS_MAIN, MAX_POINTS_GROUP
-from core.downsample import stride
 
+def _stride(df: pd.DataFrame, max_points: int) -> pd.DataFrame:
+    if len(df) <= max_points:
+        return df
+    step = ceil(len(df) / max_points)
+    return df.iloc[::step].copy()
 
-def main_chart(df: pd.DataFrame, series: List[str], axis_map: Dict[str, str], height: int) -> go.Figure:
-    """Верхний график с двумя осями Y (A1/A2)."""
+def _theme_params(theme_base: str | None):
+    base = (theme_base or "light").lower()
+    if base == "dark":
+        return {
+            "template": "plotly_dark",
+            "bg": "#0b0f14",
+            "grid": "#1a2430",
+        }
+    else:
+        return {
+            "template": "plotly_white",
+            "bg": "#ffffff",
+            "grid": "#e6e6e6",
+        }
+
+def main_chart(
+    df: pd.DataFrame,
+    series: List[str],
+    height: int,
+    theme_base: str | None = None,
+) -> go.Figure:
+    """Верхний график: одна левая ось Y, легенда снизу."""
+    params = _theme_params(theme_base)
     if not series:
         fig = go.Figure()
-        fig.update_layout(height=height, autosize=True)
+        fig.update_layout(template=params["template"], height=height, autosize=True)
         return fig
 
-    df_plot = stride(df[series], MAX_POINTS_MAIN)
+    df_plot = _stride(df[series], MAX_POINTS_MAIN)
 
     fig = go.Figure()
     fig.update_layout(
-        autosize=True,                           # <-- важно
-        margin=dict(t=36, r=16, b=40, l=60),
+        template=params["template"],
+        autosize=True,
         height=height,
-        plot_bgcolor="#0b0f14",
-        paper_bgcolor="#0b0f14",
-        legend=dict(orientation="h"),
-        xaxis=dict(title=dict(text="Время")),
-        yaxis=dict(title=dict(text="A1"), gridcolor="#1a2430"),
-        yaxis2=dict(title=dict(text="A2"), overlaying="y", side="right"),
+        margin=dict(t=30, r=20, b=90, l=60),
+        plot_bgcolor=params["bg"],
+        paper_bgcolor=params["bg"],
+        xaxis=dict(title="Время"),
+        yaxis=dict(title=series[0], gridcolor=params["grid"]),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.15,
+            x=0.5,
+            xanchor="center",
+            title=None,
+        ),
     )
 
-    # Заголовки осей — по первой серии на каждой оси
-    a1_named = False
-    a2_named = False
-
-    for col in series:
-        yref = "y" if axis_map.get(col, "A1") == "A1" else "y2"
+    for c in series:
         fig.add_trace(
             go.Scattergl(
                 x=df_plot.index,
-                y=df_plot[col],
+                y=df_plot[c],
                 mode="lines",
-                name=col,
-                yaxis=yref,
-                hovertemplate="%{x}<br>" + col + ": %{y}<extra></extra>",
+                name=c,
+                hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>",
             )
         )
-        if yref == "y" and not a1_named:
-            fig.update_layout(yaxis=dict(title=dict(text=col)))
-            a1_named = True
-        if yref == "y2" and not a2_named:
-            fig.update_layout(yaxis2=dict(title=dict(text=col)))
-            a2_named = True
 
     return fig
 
-
-def group_panel(df: pd.DataFrame, chosen_cols: List[str], height: int, two_axes: bool) -> go.Figure:
-    """Панель группы: одна ось или две (Q* на правую)."""
-    if not chosen_cols:
+def group_panel(
+    df: pd.DataFrame,
+    cols: List[str],
+    height: int,
+    theme_base: str | None = None,
+) -> go.Figure:
+    """Панель группы: без чекбоксов, показываем все переданные серии; одна ось слева, легенда снизу."""
+    params = _theme_params(theme_base)
+    present = [c for c in cols if c in df.columns]
+    if not present:
         fig = go.Figure()
-        fig.update_layout(height=height, autosize=True)
+        fig.update_layout(template=params["template"], height=height, autosize=True)
         return fig
 
-    df_plot = stride(df[chosen_cols], MAX_POINTS_GROUP)
+    df_plot = _stride(df[present], MAX_POINTS_GROUP)
 
     fig = go.Figure()
     fig.update_layout(
-        autosize=True,                           # <-- важно
-        margin=dict(t=26, r=16, b=36, l=60),
+        template=params["template"],
+        autosize=True,
         height=height,
-        plot_bgcolor="#0b0f14",
-        paper_bgcolor="#0b0f14",
-        showlegend=True,
+        margin=dict(t=26, r=20, b=80, l=60),
+        plot_bgcolor=params["bg"],
+        paper_bgcolor=params["bg"],
         xaxis=dict(title="Время"),
+        yaxis=dict(title=present[0], gridcolor=params["grid"]),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.12,
+            x=0.5,
+            xanchor="center",
+            title=None,
+        ),
     )
 
-    if two_axes:
-        left_cols = [c for c in chosen_cols if not c.startswith("Q")]
-        right_cols = [c for c in chosen_cols if c.startswith("Q")]
-        if not left_cols and right_cols:
-            left_cols, right_cols = right_cols[:1], right_cols[1:]
-
-        fig.update_layout(
-            yaxis=dict(title=dict(text=(left_cols[0] if left_cols else "A1")), gridcolor="#1a2430"),
-            yaxis2=dict(title=dict(text=(right_cols[0] if right_cols else "A2")), overlaying="y", side="right"),
+    for c in present:
+        fig.add_trace(
+            go.Scattergl(
+                x=df_plot.index,
+                y=df_plot[c],
+                mode="lines",
+                name=c,
+                hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>",
+            )
         )
-        for c in left_cols:
-            fig.add_trace(
-                go.Scattergl(
-                    x=df_plot.index, y=df_plot[c], mode="lines", name=c,
-                    hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"
-                )
-            )
-        for c in right_cols:
-            fig.add_trace(
-                go.Scattergl(
-                    x=df_plot.index, y=df_plot[c], mode="lines", name=c, yaxis="y2",
-                    hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"
-                )
-            )
-    else:
-        fig.update_layout(yaxis=dict(title=dict(text=chosen_cols[0]), gridcolor="#1a2430"))
-        for c in chosen_cols:
-            fig.add_trace(
-                go.Scattergl(
-                    x=df_plot.index, y=df_plot[c], mode="lines", name=c,
-                    hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"
-                )
-            )
 
     return fig
