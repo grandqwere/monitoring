@@ -115,17 +115,17 @@ def plot_main(df_time_indexed: pd.DataFrame, selected: List[str], axis_map: Dict
         paper_bgcolor="#0b0f14",
         legend=dict(orientation="h"),
     )
-    # Базовая левая ось
+
+    # Базовые описания осей (ВАЖНО: для A3/A4 добавлен anchor="free")
     yaxes = {
         "A1": dict(title="A1", titlefont=dict(size=12), tickfont=dict(size=11), gridcolor="#1a2430"),
         "A2": dict(title="A2", overlaying="y", side="right"),
-        "A3": dict(title="A3", overlaying="y", side="left", position=0.06, showgrid=False),
-        "A4": dict(title="A4", overlaying="y", side="right", position=0.94, showgrid=False),
+        "A3": dict(title="A3", overlaying="y", side="left",  anchor="free", position=0.06, showgrid=False),
+        "A4": dict(title="A4", overlaying="y", side="right", anchor="free", position=0.94, showgrid=False),
     }
 
     fig = go.Figure()
-    # Установим первую ось явно как y
-    layout_kwargs["yaxis"] = yaxes["A1"]
+    layout_kwargs["yaxis"]  = yaxes["A1"]
     layout_kwargs["yaxis2"] = yaxes["A2"]
     layout_kwargs["yaxis3"] = yaxes["A3"]
     layout_kwargs["yaxis4"] = yaxes["A4"]
