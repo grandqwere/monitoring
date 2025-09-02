@@ -43,16 +43,20 @@ if not num_cols:
     st.error("Не нашёл числовых колонок для графика.")
     st.stop()
 
-# ---- Переключатель режима (вместо tabs) ----
+# ---- Режим просмотра (радио) — БЕЗ key, чтобы не путать состояние ----
+if "view_mode" not in st.session_state:
+    st.session_state["view_mode"] = "Часовые"
+
 mode = st.radio(
     "Режим просмотра",
     options=["Часовые", "Усреднение"],
-    index=0 if st.session_state.get("view_mode", "Часовые") == "Часовые" else 1,
+    index=(0 if st.session_state["view_mode"] == "Часовые" else 1),
     horizontal=True,
-    key="view_mode",
 )
+# Сохраняем выбор явно
+st.session_state["view_mode"] = mode
 
-# Мини-скрипт: форсируем событие resize после отрисовки (лечит белый экран у Plotly)
+# Мини-скрипт: форсируем событие resize после отрисовки (лечит «белое поле» у Plotly)
 def trigger_resize():
     components.html(
         "<script>setTimeout(()=>{window.dispatchEvent(new Event('resize'));}, 60)</script>",
@@ -131,7 +135,7 @@ else:
     st.plotly_chart(fig_power, use_container_width=True, key="agg_group_power", config={"responsive": True})
     trigger_resize()
 
-    for idx, gname in enumerate(["Токи L1–L3", "Напряжения фазы", "Линейные U", "PF", "Углы"], start=1):
+    for idx, gname in enumerate(["Токи L1–L3", "Напряжения фазы", "Линейные У", "PF", "Углы"], start=1):
         present = [c for c in GROUPS[gname] if c in num_cols]
         if not present:
             continue
