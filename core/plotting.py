@@ -10,13 +10,14 @@ def main_chart(df: pd.DataFrame, series: List[str], axis_map: Dict[str, str], he
     """Верхний график с двумя осями Y (A1/A2)."""
     if not series:
         fig = go.Figure()
-        fig.update_layout(height=height)
+        fig.update_layout(height=height, autosize=True)
         return fig
 
     df_plot = stride(df[series], MAX_POINTS_MAIN)
 
     fig = go.Figure()
     fig.update_layout(
+        autosize=True,                           # <-- важно
         margin=dict(t=36, r=16, b=40, l=60),
         height=height,
         plot_bgcolor="#0b0f14",
@@ -56,12 +57,15 @@ def main_chart(df: pd.DataFrame, series: List[str], axis_map: Dict[str, str], he
 def group_panel(df: pd.DataFrame, chosen_cols: List[str], height: int, two_axes: bool) -> go.Figure:
     """Панель группы: одна ось или две (Q* на правую)."""
     if not chosen_cols:
-        fig = go.Figure(); fig.update_layout(height=height); return fig
+        fig = go.Figure()
+        fig.update_layout(height=height, autosize=True)
+        return fig
 
     df_plot = stride(df[chosen_cols], MAX_POINTS_GROUP)
 
     fig = go.Figure()
     fig.update_layout(
+        autosize=True,                           # <-- важно
         margin=dict(t=26, r=16, b=36, l=60),
         height=height,
         plot_bgcolor="#0b0f14",
@@ -81,15 +85,27 @@ def group_panel(df: pd.DataFrame, chosen_cols: List[str], height: int, two_axes:
             yaxis2=dict(title=dict(text=(right_cols[0] if right_cols else "A2")), overlaying="y", side="right"),
         )
         for c in left_cols:
-            fig.add_trace(go.Scattergl(x=df_plot.index, y=df_plot[c], mode="lines", name=c,
-                                       hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"))
+            fig.add_trace(
+                go.Scattergl(
+                    x=df_plot.index, y=df_plot[c], mode="lines", name=c,
+                    hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"
+                )
+            )
         for c in right_cols:
-            fig.add_trace(go.Scattergl(x=df_plot.index, y=df_plot[c], mode="lines", name=c, yaxis="y2",
-                                       hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"))
+            fig.add_trace(
+                go.Scattergl(
+                    x=df_plot.index, y=df_plot[c], mode="lines", name=c, yaxis="y2",
+                    hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"
+                )
+            )
     else:
         fig.update_layout(yaxis=dict(title=dict(text=chosen_cols[0]), gridcolor="#1a2430"))
         for c in chosen_cols:
-            fig.add_trace(go.Scattergl(x=df_plot.index, y=df_plot[c], mode="lines", name=c,
-                                       hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"))
+            fig.add_trace(
+                go.Scattergl(
+                    x=df_plot.index, y=df_plot[c], mode="lines", name=c,
+                    hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"
+                )
+            )
 
     return fig
