@@ -17,8 +17,8 @@ st.title("Усреднение по времени")
 # ---- Навигация (ссылки на страницы) ----
 with st.sidebar:
     st.markdown("### Навигация")
-    st.page_link("streamlit_app.py", label="Часовые данные", icon="📈")
-    st.page_link("pages/20_Usrednenie.py", label="Усреднение", icon="📊")
+    st.page_link("monitoring/streamlit_app.py", label="Часовые данные", icon="📈")
+    st.page_link("monitoring/pages/20_Usrednenie.py", label="Усреднение", icon="📊")
     st.markdown("---")
 
 # ---- Проверяем, что данные уже загружены на главной ----
