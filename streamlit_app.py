@@ -16,6 +16,12 @@ state.init_once()
 st.title("Просмотр графиков — часовые данные")
 
 with st.sidebar:
+    st.markdown("### Навигация")
+    st.page_link("streamlit_app.py", label="Часовые данные", icon="📈")
+    st.page_link("pages/20_Usrednenie.py", label="Усреднение", icon="📊")
+    st.markdown("---")
+
+with st.sidebar:
     st.markdown("### 1) Загрузите CSV")
     uploaded = st.file_uploader("Файл CSV (1 час = 3600 строк)", type=["csv"])
 
