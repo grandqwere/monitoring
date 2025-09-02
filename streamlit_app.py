@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components  # для мини-хака resize
 
 from core import state
 from core.config import GROUPS, HIDE_ALWAYS, TIME_COL
@@ -42,11 +43,24 @@ if not num_cols:
     st.error("Не нашёл числовых колонок для графика.")
     st.stop()
 
-# =================== ТАБЫ ===================
-tab1, tab2 = st.tabs(["Часовые", "Усреднение"])
+# ---- Переключатель режима (вместо tabs) ----
+mode = st.radio(
+    "Режим просмотра",
+    options=["Часовые", "Усреднение"],
+    index=0 if st.session_state.get("view_mode", "Часовые") == "Часовые" else 1,
+    horizontal=True,
+    key="view_mode",
+)
 
-# ---------- ТАБ 1: ЧАСОВЫЕ ----------
-with tab1:
+# Мини-скрипт: форсируем событие resize после отрисовки (лечит белый экран у Plotly)
+def trigger_resize():
+    components.html(
+        "<script>setTimeout(()=>{window.dispatchEvent(new Event('resize'));}, 60)</script>",
+        height=0, width=0
+    )
+
+# =================== РЕЖИМ: ЧАСОВЫЕ ===================
+if mode == "Часовые":
     st.subheader("Главный график (настраиваемые оси Y)")
     left, right = st.columns([0.55, 0.45], vertical_alignment="top")
     with left:
@@ -56,6 +70,7 @@ with tab1:
 
     fig_main_raw = main_chart(df, selected_raw, axis_map_raw, height=main_height)
     st.plotly_chart(fig_main_raw, use_container_width=True, key="raw_main", config={"responsive": True})
+    trigger_resize()
 
     with st.expander("Первые 50 строк таблицы (по запросу)"):
         tbl = df.copy()
@@ -69,6 +84,7 @@ with tab1:
     chosen_power = group_series_selector("Мощности (общие)", present_power, key_prefix="raw_")
     fig_power = group_panel(df, chosen_power, height=group_height, two_axes=True)
     st.plotly_chart(fig_power, use_container_width=True, key="raw_group_power", config={"responsive": True})
+    trigger_resize()
 
     for idx, gname in enumerate(["Токи L1–L3", "Напряжения фазы", "Линейные U", "PF", "Углы"], start=1):
         present = [c for c in GROUPS[gname] if c in num_cols]
@@ -77,9 +93,10 @@ with tab1:
         chosen = group_series_selector(gname, present, key_prefix="raw_")
         fig = group_panel(df, chosen, height=group_height, two_axes=False)
         st.plotly_chart(fig, use_container_width=True, key=f"raw_group_{idx}", config={"responsive": True})
+        trigger_resize()
 
-# ---------- ТАБ 2: УСРЕДНЕНИЕ ----------
-with tab2:
+# =================== РЕЖИМ: УСРЕДНЕНИЕ ===================
+else:
     st.subheader("Параметры усреднения")
     rule_label = st.selectbox("Период", ["1 мин", "5 мин", "15 мин"], index=0, key="agg_rule")
     rule_map = {"1 мин": "1min", "5 мин": "5min", "15 мин": "15min"}
@@ -105,12 +122,14 @@ with tab2:
 
     fig_main_agg = main_chart(df_agg, selected_agg, axis_map_agg, height=main_height)
     st.plotly_chart(fig_main_agg, use_container_width=True, key="agg_main", config={"responsive": True})
+    trigger_resize()
 
     st.subheader("Группы (агрегированные)")
     present_power = [c for c in GROUPS["Мощности (общие)"] if c in num_cols]
     chosen_power = group_series_selector("(Усредн.) Мощности (общие)", present_power, key_prefix="agg_")
     fig_power = group_panel(df_agg, chosen_power, height=group_height, two_axes=True)
     st.plotly_chart(fig_power, use_container_width=True, key="agg_group_power", config={"responsive": True})
+    trigger_resize()
 
     for idx, gname in enumerate(["Токи L1–L3", "Напряжения фазы", "Линейные U", "PF", "Углы"], start=1):
         present = [c for c in GROUPS[gname] if c in num_cols]
@@ -119,3 +138,4 @@ with tab2:
         chosen = group_series_selector(f"(Усредн.) {gname}", present, key_prefix="agg_")
         fig = group_panel(df_agg, chosen, height=group_height, two_axes=False)
         st.plotly_chart(fig, use_container_width=True, key=f"agg_group_{idx}", config={"responsive": True})
+        trigger_resize()
