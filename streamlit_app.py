@@ -116,12 +116,16 @@ def plot_main(df_time_indexed: pd.DataFrame, selected: List[str], axis_map: Dict
         legend=dict(orientation="h"),
     )
 
-    # Базовые описания осей (ВАЖНО: для A3/A4 добавлен anchor="free")
+    # Базовые оси:
+    # A1 — обычная слева
+    # A2 — поверх A1, справа
+    # A3 — свободная ось слева внутри поля графика (position 0.06)
+    # A4 — свободная ось справа внутри поля графика (position 0.94)
     yaxes = {
         "A1": dict(title="A1", titlefont=dict(size=12), tickfont=dict(size=11), gridcolor="#1a2430"),
         "A2": dict(title="A2", overlaying="y", side="right"),
-        "A3": dict(title="A3", overlaying="y", side="left",  anchor="free", position=0.06, showgrid=False),
-        "A4": dict(title="A4", overlaying="y", side="right", anchor="free", position=0.94, showgrid=False),
+        "A3": dict(title="A3", side="left",  anchor="free", position=0.06, showgrid=False),
+        "A4": dict(title="A4", side="right", anchor="free", position=0.94, showgrid=False),
     }
 
     fig = go.Figure()
@@ -129,6 +133,7 @@ def plot_main(df_time_indexed: pd.DataFrame, selected: List[str], axis_map: Dict
     layout_kwargs["yaxis2"] = yaxes["A2"]
     layout_kwargs["yaxis3"] = yaxes["A3"]
     layout_kwargs["yaxis4"] = yaxes["A4"]
+
 
     # Подписи осей — по первой попавшейся серии на оси
     axis_first_title: Dict[str, str] = {}
