@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
-from plotly.colors import qualitative as qual  # для цветов подписи чекбоксов
 
 from core import state
 from core.config import HIDE_ALWAYS, DEFAULT_PRESET, PLOT_HEIGHT
@@ -38,9 +37,8 @@ if not num_cols:
     st.error("Не нашёл числовых колонок для графика.")
     st.stop()
 
-# Цветовая палитра (как у графика), чтобы окрасить подписи чекбоксов
-theme_base = (st.get_option("theme.base") or "light").lower()
-color_cycle = list(qual.Plotly)
+# Тема Streamlit (для подбора шаблона/палитры)
+theme_base = st.get_option("theme.base") or "light"
 
 # =================== СВОДНЫЙ ГРАФИК ===================
 st.subheader("Сводный график")
@@ -53,37 +51,33 @@ selected_main = st.multiselect(
     key="main_fields",
 )
 
-# ---- Нормирование шкалы: нельзя выбрать все — максимум len(selected_main) - 1 ----
+# ---- Нормирование шкалы: максимум (len(selected_main) - 1) галочек ----
 st.markdown("**Нормирование шкалы** (отдельные шкалы слева для отмеченных трендов):")
-
-# Сначала — показать чекбоксы (без принудительного блокирования),
-# затем жёстко применим ограничение к состоянию.
-for c in list(st.session_state.keys()):
-    if c.startswith("norm_") and c[5:] not in selected_main:
-        del st.session_state[c]
-
-# карта цветов серий в том же порядке, что и в графике
-series_colors = {c: color_cycle[i % len(color_cycle)] for i, c in enumerate(selected_main)}
-
-# рисуем чекбоксы с цветными лейблами (сам чекбокс без подписи)
-separate_raw = []
-for c in selected_main:
-    col_cb, col_lbl = st.columns([0.08, 0.92])
-    with col_cb:
-        st.checkbox("", key=f"norm_{c}", value=bool(st.session_state.get(f"norm_{c}", False)))
-    with col_lbl:
-        st.markdown(f"<span style='color:{series_colors[c]}; font-weight:500'>{c}</span>", unsafe_allow_html=True)
-
-# применяем ограничение: максимум len(selected_main) - 1 отмеченных
-chosen = [c for c in selected_main if st.session_state.get(f"norm_{c}", False)]
+separate_set = set()
 max_allowed = max(0, len(selected_main) - 1)
-if len(chosen) > max_allowed:
-    # оставляем первые max_allowed по порядку выбранных серий, остальные снимаем
-    for c in chosen[max_allowed:]:
-        st.session_state[f"norm_{c}"] = False
-        # обновим локальный список (на случай последующей логики)
-chosen = [c for c in selected_main if st.session_state.get(f"norm_{c}", False)]
-separate_set = set(chosen)
+checked_count = 0
+
+# чистим старые ключи чекбоксов, которых больше нет среди выбранных серий
+for k in list(st.session_state.keys()):
+    if k.startswith("norm_"):
+        col = k[5:]
+        if col not in selected_main:
+            del st.session_state[k]
+
+for c in selected_main:
+    prev_val = bool(st.session_state.get(f"norm_{c}", False))
+    disabled = (checked_count >= max_allowed) and (not prev_val)
+    val = st.checkbox(c, value=prev_val, key=f"norm_{c}", disabled=disabled)
+    if val:
+        separate_set.add(c)
+        checked_count += 1
+
+# на всякий случай: если по состоянию получилось равно количеству серий — снимем последнюю
+if len(separate_set) >= len(selected_main) and selected_main:
+    last = selected_main[-1]
+    if last in separate_set:
+        separate_set.remove(last)
+        st.session_state[f"norm_{last}"] = False
 
 # --- Рендер сводного графика ---
 fig_main = main_chart(
@@ -95,33 +89,39 @@ fig_main = main_chart(
 )
 st.plotly_chart(fig_main, use_container_width=True, config={"responsive": True}, key="main")
 
-# =================== ГРУППЫ ===================
+# =================== ГРУППЫ (фикс-названия) ===================
 
+# 1) Мощность: активная / полная / реактивная
 st.subheader("Мощность: активная / полная / реактивная")
 present_power = [c for c in ["P_total", "S_total", "Q_total"] if c in df.columns]
 fig_power = group_panel(df, present_power, height=PLOT_HEIGHT, theme_base=theme_base)
 st.plotly_chart(fig_power, use_container_width=True, config={"responsive": True}, key="grp_power")
 
+# 2) Токи фаз L1–L3
 st.subheader("Токи фаз L1–L3")
 present_curr = [c for c in ["Irms_L1", "Irms_L2", "Irms_L3"] if c in df.columns]
 fig_curr = group_panel(df, present_curr, height=PLOT_HEIGHT, theme_base=theme_base)
 st.plotly_chart(fig_curr, use_container_width=True, config={"responsive": True}, key="grp_curr")
 
+# 3) Напряжение (фазное) L1–L3
 st.subheader("Напряжение (фазное) L1–L3")
 present_urms = [c for c in ["Urms_L1", "Urms_L2", "Urms_L3"] if c in df.columns]
 fig_urms = group_panel(df, present_urms, height=PLOT_HEIGHT, theme_base=theme_base)
 st.plotly_chart(fig_urms, use_container_width=True, config={"responsive": True}, key="grp_urms")
 
+# 4) Напряжение (линейное) L12 / L23 / L31
 st.subheader("Напряжение (линейное) L12 / L23 / L31")
 present_uline = [c for c in ["U_L1_L2", "U_L2_L3", "U_L3_L1"] if c in df.columns]
 fig_uline = group_panel(df, present_uline, height=PLOT_HEIGHT, theme_base=theme_base)
 st.plotly_chart(fig_uline, use_container_width=True, config={"responsive": True}, key="grp_uline")
 
+# 5) Коэффициент мощности (PF)
 st.subheader("Коэффициент мощности (PF)")
 present_pf = [c for c in ["pf_total", "pf_L1", "pf_L2", "pf_L3"] if c in df.columns]
 fig_pf = group_panel(df, present_pf, height=PLOT_HEIGHT, theme_base=theme_base)
 st.plotly_chart(fig_pf, use_container_width=True, config={"responsive": True}, key="grp_pf")
 
+# 6) Фазовые углы (между линиями)
 st.subheader("Фазовые углы (между линиями)")
 present_ang = [c for c in ["angle_L1_L2", "angle_L2_L3", "angle_L3_L1"] if c in df.columns]
 fig_ang = group_panel(df, present_ang, height=PLOT_HEIGHT, theme_base=theme_base)
