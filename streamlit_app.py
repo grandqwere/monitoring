@@ -14,6 +14,25 @@ state.init_once()
 
 st.title("Сводные графики электроизмерений")
 
+# ------- вспомогательное: кнопка «Обновить» для конкретного графика -------
+def refresh_bar(title: str, name: str) -> int:
+    """
+    Рисует заголовок + кнопку «↻ Обновить» справа.
+    Возвращает текущий refresh-счётчик (int) для включения в key графика.
+    """
+    key = f"refresh_{name}"
+    if key not in st.session_state:
+        st.session_state[key] = 0
+
+    left, right = st.columns([0.85, 0.15])
+    with left:
+        st.subheader(title)
+    with right:
+        if st.button("↻ Обновить", key=f"btn_{name}"):
+            st.session_state[key] += 1
+    return st.session_state[key]
+# ---------------------------------------------------------------------------
+
 # ---- Боковая панель: загрузка ----
 with st.sidebar:
     st.markdown("### Загрузите CSV")
@@ -37,11 +56,11 @@ if not num_cols:
     st.error("Не нашёл числовых колонок для графика.")
     st.stop()
 
-# Тема Streamlit (для подбора шаблона/палитры)
+# Тема Streamlit (для шаблона/палитры Plotly)
 theme_base = st.get_option("theme.base") or "light"
 
 # =================== СВОДНЫЙ ГРАФИК ===================
-st.subheader("Сводный график")
+token_main = refresh_bar("Сводный график", "main")
 
 default_main = [c for c in DEFAULT_PRESET if c in num_cols] or num_cols[:3]
 selected_main = st.multiselect(
@@ -51,13 +70,12 @@ selected_main = st.multiselect(
     key="main_fields",
 )
 
-# ---- Нормирование шкалы: максимум (len(selected_main) - 1) галочек ----
 st.markdown("**Нормирование шкалы** (отдельные шкалы слева для отмеченных трендов):")
 separate_set = set()
 max_allowed = max(0, len(selected_main) - 1)
 checked_count = 0
 
-# чистим старые ключи чекбоксов, которых больше нет среди выбранных серий
+# почистим старые ключи чекбоксов, которых больше нет
 for k in list(st.session_state.keys()):
     if k.startswith("norm_"):
         col = k[5:]
@@ -72,14 +90,13 @@ for c in selected_main:
         separate_set.add(c)
         checked_count += 1
 
-# на всякий случай: если по состоянию получилось равно количеству серий — снимем последнюю
+# гарантия: хотя бы одна серия остаётся на базовой оси
 if len(separate_set) >= len(selected_main) and selected_main:
     last = selected_main[-1]
     if last in separate_set:
         separate_set.remove(last)
         st.session_state[f"norm_{last}"] = False
 
-# --- Рендер сводного графика ---
 fig_main = main_chart(
     df=df,
     series=selected_main,
@@ -87,42 +104,47 @@ fig_main = main_chart(
     theme_base=theme_base,
     separate_axes=separate_set,
 )
-st.plotly_chart(fig_main, use_container_width=True, config={"responsive": True}, key="main")
+st.plotly_chart(
+    fig_main,
+    use_container_width=True,
+    config={"responsive": True},
+    key=f"main_{token_main}",
+)
 
-# =================== ГРУППЫ (фикс-названия) ===================
+# =================== ГРУППЫ ===================
 
 # 1) Мощность: активная / полная / реактивная
-st.subheader("Мощность: активная / полная / реактивная")
+token_p = refresh_bar("Мощность: активная / полная / реактивная", "grp_power")
 present_power = [c for c in ["P_total", "S_total", "Q_total"] if c in df.columns]
 fig_power = group_panel(df, present_power, height=PLOT_HEIGHT, theme_base=theme_base)
-st.plotly_chart(fig_power, use_container_width=True, config={"responsive": True}, key="grp_power")
+st.plotly_chart(fig_power, use_container_width=True, config={"responsive": True}, key=f"grp_power_{token_p}")
 
 # 2) Токи фаз L1–L3
-st.subheader("Токи фаз L1–L3")
+token_c = refresh_bar("Токи фаз L1–L3", "grp_curr")
 present_curr = [c for c in ["Irms_L1", "Irms_L2", "Irms_L3"] if c in df.columns]
 fig_curr = group_panel(df, present_curr, height=PLOT_HEIGHT, theme_base=theme_base)
-st.plotly_chart(fig_curr, use_container_width=True, config={"responsive": True}, key="grp_curr")
+st.plotly_chart(fig_curr, use_container_width=True, config={"responsive": True}, key=f"grp_curr_{token_c}")
 
 # 3) Напряжение (фазное) L1–L3
-st.subheader("Напряжение (фазное) L1–L3")
+token_ur = refresh_bar("Напряжение (фазное) L1–L3", "grp_urms")
 present_urms = [c for c in ["Urms_L1", "Urms_L2", "Urms_L3"] if c in df.columns]
 fig_urms = group_panel(df, present_urms, height=PLOT_HEIGHT, theme_base=theme_base)
-st.plotly_chart(fig_urms, use_container_width=True, config={"responsive": True}, key="grp_urms")
+st.plotly_chart(fig_urms, use_container_width=True, config={"responsive": True}, key=f"grp_urms_{token_ur}")
 
 # 4) Напряжение (линейное) L12 / L23 / L31
-st.subheader("Напряжение (линейное) L12 / L23 / L31")
+token_ul = refresh_bar("Напряжение (линейное) L12 / L23 / L31", "grp_uline")
 present_uline = [c for c in ["U_L1_L2", "U_L2_L3", "U_L3_L1"] if c in df.columns]
 fig_uline = group_panel(df, present_uline, height=PLOT_HEIGHT, theme_base=theme_base)
-st.plotly_chart(fig_uline, use_container_width=True, config={"responsive": True}, key="grp_uline")
+st.plotly_chart(fig_uline, use_container_width=True, config={"responsive": True}, key=f"grp_uline_{token_ul}")
 
 # 5) Коэффициент мощности (PF)
-st.subheader("Коэффициент мощности (PF)")
+token_pf = refresh_bar("Коэффициент мощности (PF)", "grp_pf")
 present_pf = [c for c in ["pf_total", "pf_L1", "pf_L2", "pf_L3"] if c in df.columns]
 fig_pf = group_panel(df, present_pf, height=PLOT_HEIGHT, theme_base=theme_base)
-st.plotly_chart(fig_pf, use_container_width=True, config={"responsive": True}, key="grp_pf")
+st.plotly_chart(fig_pf, use_container_width=True, config={"responsive": True}, key=f"grp_pf_{token_pf}")
 
 # 6) Фазовые углы (между линиями)
-st.subheader("Фазовые углы (между линиями)")
+token_ang = refresh_bar("Фазовые углы (между линиями)", "grp_ang")
 present_ang = [c for c in ["angle_L1_L2", "angle_L2_L3", "angle_L3_L1"] if c in df.columns]
 fig_ang = group_panel(df, present_ang, height=PLOT_HEIGHT, theme_base=theme_base)
-st.plotly_chart(fig_ang, use_container_width=True, config={"responsive": True}, key="grp_ang")
+st.plotly_chart(fig_ang, use_container_width=True, config={"responsive": True}, key=f"grp_ang_{token_ang}")
