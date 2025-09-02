@@ -21,14 +21,16 @@ def _theme_params(theme_base: str | None):
         return {
             "template": "plotly_dark",
             "bg": "#0b0f14",
-            "grid": "rgba(160,160,160,0.25)",
+            "paper_grid": "rgba(160,160,160,0.25)",
+            "axis_grid": "rgba(100,100,100,0.25)",
             "colorway": qual.Plotly,
         }
     else:
         return {
             "template": "plotly_white",
             "bg": "#ffffff",
-            "grid": "rgba(0,0,0,0.12)",
+            "paper_grid": "rgba(0,0,0,0.12)",
+            "axis_grid": "rgba(0,0,0,0.10)",
             "colorway": qual.Plotly,
         }
 
@@ -42,11 +44,11 @@ def main_chart(
 ) -> go.Figure:
     """
     Сводный график:
-      - базовая левая ось (для серий без галочки),
-      - дополнительные ЛЕВЫЕ оси для серий из separate_axes,
-      - у доп. осей только цифры (цвет = цвет линии), без заголовков,
-      - легенда снизу,
-      - если есть separate_axes -> сетка «бумажная» (paper), осевые гриды выключены.
+      - базовая левая ось (для серий без галочки) — цвет цифр равен цвету первой базовой серии;
+      - дополнительные ЛЕВЫЕ оси для серий из separate_axes — все «прижаты» к левому краю,
+        только цветные цифры, без заголовков/гридов;
+      - если есть separate_axes -> рисуем «бумажную» сетку (shapes в paper-координатах);
+      - легенда снизу; подписи осей скрыты.
     """
     params = _theme_params(theme_base)
     separate_axes = separate_axes or set()
@@ -60,7 +62,8 @@ def main_chart(
         plot_bgcolor=params["bg"],
         paper_bgcolor=params["bg"],
         xaxis=dict(title=None),
-        yaxis=dict(title=None, showgrid=(len(separate_axes) == 0), gridcolor=params["grid"]),
+        # showgrid у базовой оси включаем только если нет отдельных осей
+        yaxis=dict(title=None, showgrid=(len(separate_axes) == 0), gridcolor=params["axis_grid"]),
         legend=dict(
             orientation="h",
             yanchor="top",
@@ -80,11 +83,11 @@ def main_chart(
         return fig
     df_plot = _stride(df[present], MAX_POINTS_MAIN)
 
-    # Карта цветов для стабильности: цвет цифр осей совпадает с цветом линии
+    # цвет каждой серии (стабильно по порядку)
     cw = list(params["colorway"])
     color_map: Dict[str, str] = {c: cw[i % len(cw)] for i, c in enumerate(present)}
 
-    # 1) Базовые серии (без галочки) -> обычная ось y
+    # базовые серии (без галочки) -> обычная ось y
     base_series = [c for c in present if c not in separate_axes]
     for c in base_series:
         fig.add_trace(
@@ -98,23 +101,21 @@ def main_chart(
             )
         )
 
-    # 2) Дополнительные ЛЕВЫЕ оси для «нормируемых» серий
-    # «Первая — на хорошем расстоянии», следующие — «чуть левее» (ближе к краю),
-    # чтобы меньше заходили в поле графика.
-    pos_first = 0.12
-    pos_step_back = 0.04   # шаг смещения влево для последующих
-    pos_min = 0.015
+    # цвет цифр у базовой оси = цвет первой базовой серии (есть гарантия, что она есть)
+    if base_series:
+        fig.update_layout(yaxis=dict(tickfont=dict(color=color_map[base_series[0]])))
 
-    # начинаем нумерацию с yaxis2 (yaxis — базовая)
-    axis_idx = 1
+    # дополнительные ЛЕВЫЕ оси — все «прижаты» к левому краю (минимальный сдвиг, чтобы не съехать за границу)
+    pos_min = 0.001
+    pos_step = 0.003  # чуть-чуть «веером», но визуально у самого края
+
+    axis_idx = 1  # yaxis — базовая; дальше yaxis2, yaxis3, ...
     for j, c in enumerate([s for s in present if s in separate_axes]):
         axis_idx += 1
         yaxis_name = f"yaxis{axis_idx}"
         yref = f"y{axis_idx}"
+        pos_val = min(0.02, pos_min + j * pos_step)  # «прижато» к левому краю
 
-        pos_val = max(pos_min, pos_first - j * pos_step_back)
-
-        # для дополнительной оси: только цветные цифры, без сетки/нуля/заголовка
         fig.update_layout(
             **{
                 yaxis_name: dict(
@@ -141,17 +142,16 @@ def main_chart(
             )
         )
 
-    # 3) Если есть отдельные оси — рисуем «бумажную» сетку (не привязана к шкалам)
+    # «бумажная» горизонтальная сетка, если есть отдельные оси
     if len(separate_axes) > 0:
         shapes = []
         for y in (0.2, 0.4, 0.6, 0.8):
             shapes.append(
                 dict(
                     type="line",
-                    xref="paper",
-                    yref="paper",
+                    xref="paper", yref="paper",
                     x0=0, x1=1, y0=y, y1=y,
-                    line=dict(color=params["grid"], width=1, dash="dot"),
+                    line=dict(color=params["paper_grid"], width=1, dash="dot"),
                     layer="below",
                 )
             )
@@ -178,7 +178,7 @@ def group_panel(
         plot_bgcolor=params["bg"],
         paper_bgcolor=params["bg"],
         xaxis=dict(title=None),
-        yaxis=dict(title=None, showgrid=True, gridcolor=params["grid"]),
+        yaxis=dict(title=None, showgrid=True, gridcolor=params["axis_grid"]),
         showlegend=True,
         legend=dict(
             orientation="h",
