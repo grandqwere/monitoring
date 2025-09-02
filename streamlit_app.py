@@ -55,7 +55,7 @@ with tab1:
         axis_map_raw = axis_selector(selected_raw, key_prefix="raw_")
 
     fig_main_raw = main_chart(df, selected_raw, axis_map_raw, height=main_height)
-    st.plotly_chart(fig_main_raw, use_container_width=True)
+    st.plotly_chart(fig_main_raw, use_container_width=True, key="raw_main", config={"responsive": True})
 
     with st.expander("Первые 50 строк таблицы (по запросу)"):
         tbl = df.copy()
@@ -68,15 +68,15 @@ with tab1:
     present_power = [c for c in GROUPS["Мощности (общие)"] if c in num_cols]
     chosen_power = group_series_selector("Мощности (общие)", present_power, key_prefix="raw_")
     fig_power = group_panel(df, chosen_power, height=group_height, two_axes=True)
-    st.plotly_chart(fig_power, use_container_width=True)
+    st.plotly_chart(fig_power, use_container_width=True, key="raw_group_power", config={"responsive": True})
 
-    for gname in ["Токи L1–L3", "Напряжения фазы", "Линейные U", "PF", "Углы"]:
+    for idx, gname in enumerate(["Токи L1–L3", "Напряжения фазы", "Линейные U", "PF", "Углы"], start=1):
         present = [c for c in GROUPS[gname] if c in num_cols]
         if not present:
             continue
         chosen = group_series_selector(gname, present, key_prefix="raw_")
         fig = group_panel(df, chosen, height=group_height, two_axes=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"raw_group_{idx}", config={"responsive": True})
 
 # ---------- ТАБ 2: УСРЕДНЕНИЕ ----------
 with tab2:
@@ -104,18 +104,18 @@ with tab2:
         axis_map_agg = axis_selector(selected_agg, key_prefix="agg_")
 
     fig_main_agg = main_chart(df_agg, selected_agg, axis_map_agg, height=main_height)
-    st.plotly_chart(fig_main_agg, use_container_width=True)
+    st.plotly_chart(fig_main_agg, use_container_width=True, key="agg_main", config={"responsive": True})
 
     st.subheader("Группы (агрегированные)")
     present_power = [c for c in GROUPS["Мощности (общие)"] if c in num_cols]
     chosen_power = group_series_selector("(Усредн.) Мощности (общие)", present_power, key_prefix="agg_")
     fig_power = group_panel(df_agg, chosen_power, height=group_height, two_axes=True)
-    st.plotly_chart(fig_power, use_container_width=True)
+    st.plotly_chart(fig_power, use_container_width=True, key="agg_group_power", config={"responsive": True})
 
-    for gname in ["Токи L1–L3", "Напряжения фазы", "Линейные U", "PF", "Углы"]:
+    for idx, gname in enumerate(["Токи L1–L3", "Напряжения фазы", "Линейные U", "PF", "Углы"], start=1):
         present = [c for c in GROUPS[gname] if c in num_cols]
         if not present:
             continue
         chosen = group_series_selector(f"(Усредн.) {gname}", present, key_prefix="agg_")
         fig = group_panel(df_agg, chosen, height=group_height, two_axes=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"agg_group_{idx}", config={"responsive": True})
