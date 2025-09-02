@@ -13,7 +13,7 @@ HIDE_ALWAYS = {"uptime"}
 MAX_POINTS_MAIN = 5000   # лимит точек на верхнем графике
 MAX_POINTS_GROUP = 5000  # лимит точек на групповых
 DEFAULT_PRESET = ["P_total", "S_total", "Q_total"]  # что предлагать по умолчанию
-AXIS_LABELS = {"A1": "A1 (слева)", "A2": "A2 (справа)", "A3": "A3 (внутр. слева)", "A4": "A4 (внутр. справа)"}
+AXIS_LABELS = {"A1": "A1 (слева)", "A2": "A2 (справа)"}  # временно убрали A3/A4
 
 GROUPS: Dict[str, List[str]] = {
     "Мощности (общие)": ["P_total", "S_total", "Q_total"],
@@ -97,16 +97,18 @@ def downsample_stride(df: pd.DataFrame, max_points: int) -> pd.DataFrame:
 
 def plot_main(df_time_indexed: pd.DataFrame, selected: List[str], axis_map: Dict[str, str], height: int):
     """
-    Верхний «свободный» график с до 4 осей Y.
-    axis_map: {column -> "A1"|"A2"|"A3"|"A4"}
+    Верхний «свободный» график с ДВУМЯ осями Y (A1 слева, A2 справа).
+    selected: список колонок
+    axis_map: {column -> "A1"|"A2"}
     """
     if not selected:
         st.info("Выберите серии для верхнего графика.")
         return
 
+    # Прореживаем для отзывчивости
     df_plot = downsample_stride(df_time_indexed[selected], MAX_POINTS_MAIN)
 
-    # Настройка осей
+    # Настройка макета
     layout_kwargs = dict(
         margin=dict(t=36, r=16, b=40, l=60),
         height=height,
@@ -116,39 +118,29 @@ def plot_main(df_time_indexed: pd.DataFrame, selected: List[str], axis_map: Dict
         legend=dict(orientation="h"),
     )
 
-    # Базовые оси:
-    # A1 — обычная слева
-    # A2 — поверх A1, справа
-    # A3 — свободная ось слева внутри поля графика (position 0.06)
-    # A4 — свободная ось справа внутри поля графика (position 0.94)
+    # A1 — левая, A2 — правая поверх A1
     yaxes = {
         "A1": dict(title="A1", titlefont=dict(size=12), tickfont=dict(size=11), gridcolor="#1a2430"),
         "A2": dict(title="A2", overlaying="y", side="right"),
-        "A3": dict(title="A3", side="left",  anchor="free", position=0.06, showgrid=False),
-        "A4": dict(title="A4", side="right", anchor="free", position=0.94, showgrid=False),
     }
 
     fig = go.Figure()
     layout_kwargs["yaxis"]  = yaxes["A1"]
     layout_kwargs["yaxis2"] = yaxes["A2"]
-    layout_kwargs["yaxis3"] = yaxes["A3"]
-    layout_kwargs["yaxis4"] = yaxes["A4"]
 
-
-    # Подписи осей — по первой попавшейся серии на оси
+    # Заголовки осей — по первой серии на каждой оси
     axis_first_title: Dict[str, str] = {}
     for col in selected:
-        ax = axis_map.get(col, "A1")
+        ax = axis_map.get(col, "A1")  # по умолчанию A1
         if ax not in axis_first_title:
             axis_first_title[ax] = col
-            # обновим заголовок оси именем первой серии
-            idx = "" if ax == "A1" else ax[-1]  # "" | "2" | "3" | "4"
-            layout_kwargs[f"yaxis{idx}"]["title"] = col
+            suffix = "" if ax == "A1" else "2"
+            layout_kwargs[f"yaxis{suffix}"]["title"] = col
 
     # Добавляем серии
     for col in selected:
-        axis_code = axis_map.get(col, "A1")
-        yref = {"A1": "y", "A2": "y2", "A3": "y3", "A4": "y4"}[axis_code]
+        axis_code = axis_map.get(col, "A1")  # A1|A2
+        yref = "y" if axis_code == "A1" else "y2"
         fig.add_trace(
             go.Scattergl(
                 x=df_plot.index,
@@ -285,14 +277,13 @@ with left:
 with right:
     st.write("Назначение осей Y для выбранных серий")
     axis_map: Dict[str, str] = {}
-    # Стабильные ключи для виджетов
     for c in selected:
-        # эвристика для старта: Q -> A2 (правая), остальное -> A1
+        # эвристика по умолчанию: Q -> правая ось A2, остальное -> A1
         default_axis = "A2" if c.startswith("Q") else "A1"
         axis_map[c] = st.selectbox(
             f"{c}",
-            options=list(AXIS_LABELS.keys()),
-            index=["A1", "A2", "A3", "A4"].index(default_axis),
+            options=["A1", "A2"],                 # только две оси
+            index=["A1", "A2"].index(default_axis),
             format_func=lambda k: AXIS_LABELS[k],
             key=f"axis_{c}",
         )
