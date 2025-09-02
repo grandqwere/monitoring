@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from core import state
-from core.config import GROUPS, HIDE_ALWAYS, TIME_COL
+from core.config import GROUPS, HIDE_ALWAYS
 from core.ui import height_controls, series_selector, axis_selector, group_series_selector
 from core.plotting import main_chart, group_panel
 from core.downsample import resample
@@ -14,16 +14,8 @@ state.init_once()
 
 st.title("Усреднение по времени")
 
-# ---- Навигация (ссылки на страницы) ----
-with st.sidebar:
-    st.markdown("### Навигация")
-    st.page_link("monitoring/streamlit_app.py", label="Часовые данные", icon="📈")
-    st.page_link("monitoring/pages/20_Usrednenie.py", label="Усреднение", icon="📊")
-    st.markdown("---")
-
-# ---- Проверяем, что данные уже загружены на главной ----
 if st.session_state.get("df_current") is None:
-    st.info("Сначала откройте главную страницу и загрузите CSV.")
+    st.info("Сначала откройте главную страницу и загрузите CSV. Вернуться можно через меню страниц (иконка ≡).")
     st.stop()
 
 df = st.session_state["df_current"]
@@ -44,6 +36,7 @@ with st.sidebar:
     agg = agg_map[agg_label]
 
     main_height, group_height = height_controls()
+    st.caption("Вернуться на «Часовые данные» — через меню страниц (иконка ≡ вверху).")
 
 # ---- Агрегация ----
 try:
@@ -57,10 +50,10 @@ st.subheader("Главный график (агрегированные данн
 left, right = st.columns([0.55, 0.45], vertical_alignment="top")
 
 with left:
-    selected = series_selector(num_cols)   # выбираем серии по именам исходных колонок
+    selected = series_selector(num_cols)
 
 with right:
-    axis_map = axis_selector(selected)     # назначаем им A1/A2
+    axis_map = axis_selector(selected)
 
 fig_main = main_chart(df_agg, selected, axis_map, height=main_height)
 st.plotly_chart(fig_main, use_container_width=True)
