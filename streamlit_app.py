@@ -8,14 +8,13 @@ from core.config import GROUPS, HIDE_ALWAYS, TIME_COL, DEFAULT_PRESET, PLOT_HEIG
 from core.data_io import read_csv_local
 from core.prepare import normalize
 from core.plotting import main_chart, group_panel
-from core.downsample import resample  # для усреднения (радио-переключатель)
 
 st.set_page_config(page_title="Power Monitoring Viewer", layout="wide")
 state.init_once()
 
-st.title("Просмотр графиков")
+st.title("Сводные графики электроизмерений")
 
-# ---- Боковая панель: загрузка файла ----
+# ---- Боковая панель: загрузка ----
 with st.sidebar:
     st.markdown("### Загрузите CSV")
     uploaded = st.file_uploader("Файл CSV (1 час = 3600 строк)", type=["csv"])
@@ -38,52 +37,54 @@ if not num_cols:
     st.error("Не нашёл числовых колонок для графика.")
     st.stop()
 
-# ---- Режим (одна страница, без табов): "Часовые" / "Усреднение" ----
-if "view_mode" not in st.session_state:
-    st.session_state["view_mode"] = "Часовые"
-
-mode = st.radio(
-    "Режим данных",
-    options=["Часовые", "Усреднение"],
-    index=(0 if st.session_state["view_mode"] == "Часовые" else 1),
-    horizontal=True,
-)
-st.session_state["view_mode"] = mode
-
-# Узнаём базовую тему Streamlit для Plotly (light/dark)
+# Определяем тему Streamlit для Plotly
 theme_base = st.get_option("theme.base") or "light"
 
-# --- Выбор исходного df для графиков ---
-if mode == "Часовые":
-    df_show = df
-else:
-    # простые пресеты усреднения, без доп. контролов: 1 мин среднее
-    try:
-        df_show = resample(df, rule="1min", agg="mean")
-    except Exception as e:
-        st.error(f"Ошибка усреднения: {e}")
-        st.stop()
-
-# =================== ВЕРХНИЙ ГРАФИК ===================
-st.subheader("Главный график")
-main_series = [c for c in DEFAULT_PRESET if c in num_cols] or num_cols[:3]
-fig_main = main_chart(df_show, main_series, height=PLOT_HEIGHT, theme_base=theme_base)
+# =================== СВОДНЫЙ ГРАФИК ===================
+st.subheader("Сводный график")
+default_main = [c for c in DEFAULT_PRESET if c in num_cols] or num_cols[:3]
+selected_main = st.multiselect(
+    "Поля для сводного графика",
+    options=num_cols,
+    default=default_main,
+)
+fig_main = main_chart(df, selected_main, height=PLOT_HEIGHT, theme_base=theme_base)
 st.plotly_chart(fig_main, use_container_width=True, config={"responsive": True}, key="main")
 
-# =================== НИЖНИЕ ПАНЕЛИ (ГРУППЫ) ===================
-st.subheader("Групповые графики (кликайте по легенде, чтобы скрывать/показывать серии)")
+# =================== ГРУППЫ (без чекбоксов, названия «по-электрически») ===================
 
-# Мощности
-present_power = [c for c in GROUPS["Мощности (общие)"] if c in df_show.columns]
-if present_power:
-    fig_power = group_panel(df_show, present_power, height=PLOT_HEIGHT, theme_base=theme_base)
-    st.plotly_chart(fig_power, use_container_width=True, config={"responsive": True}, key="grp_power")
+# 1) Мощности: активная/полная/реактивная
+st.subheader("Мощность: активная / полная / реактивная")
+present_power = ["P_total", "S_total", "Q_total"]
+fig_power = group_panel(df, present_power, height=PLOT_HEIGHT, theme_base=theme_base)
+st.plotly_chart(fig_power, use_container_width=True, config={"responsive": True}, key="grp_power")
 
-# Остальные группы
-order = ["Токи L1–L3", "Напряжения фазы", "Линейные U", "PF", "Углы"]
-for i, gname in enumerate(order, start=1):
-    present = [c for c in GROUPS[gname] if c in df_show.columns]
-    if not present:
-        continue
-    fig = group_panel(df_show, present, height=PLOT_HEIGHT, theme_base=theme_base)
-    st.plotly_chart(fig, use_container_width=True, config={"responsive": True}, key=f"grp_{i}")
+# 2) Токи фаз L1–L3
+st.subheader("Токи фаз L1–L3")
+present_curr = ["Irms_L1", "Irms_L2", "Irms_L3"]
+fig_curr = group_panel(df, present_curr, height=PLOT_HEIGHT, theme_base=theme_base)
+st.plotly_chart(fig_curr, use_container_width=True, config={"responsive": True}, key="grp_curr")
+
+# 3) Напряжение фазное L1–L3
+st.subheader("Напряжение (фазное) L1–L3")
+present_urms = ["Urms_L1", "Urms_L2", "Urms_L3"]
+fig_urms = group_panel(df, present_urms, height=PLOT_HEIGHT, theme_base=theme_base)
+st.plotly_chart(fig_urms, use_container_width=True, config={"responsive": True}, key="grp_urms")
+
+# 4) Напряжение линейное L12 / L23 / L31
+st.subheader("Напряжение (линейное) L12 / L23 / L31")
+present_uline = ["U_L1_L2", "U_L2_L3", "U_L3_L1"]
+fig_uline = group_panel(df, present_uline, height=PLOT_HEIGHT, theme_base=theme_base)
+st.plotly_chart(fig_uline, use_container_width=True, config={"responsive": True}, key="grp_uline")
+
+# 5) Коэффициент мощности (PF)
+st.subheader("Коэффициент мощности (PF)")
+present_pf = ["pf_total", "pf_L1", "pf_L2", "pf_L3"]
+fig_pf = group_panel(df, present_pf, height=PLOT_HEIGHT, theme_base=theme_base)
+st.plotly_chart(fig_pf, use_container_width=True, config={"responsive": True}, key="grp_pf")
+
+# 6) Углы между фазами
+st.subheader("Фазовые углы (между линиями)")
+present_ang = ["angle_L1_L2", "angle_L2_L3", "angle_L3_L1"]
+fig_ang = group_panel(df, present_ang, height=PLOT_HEIGHT, theme_base=theme_base)
+st.plotly_chart(fig_ang, use_container_width=True, config={"responsive": True}, key="grp_ang")
