@@ -97,7 +97,7 @@ def downsample_stride(df: pd.DataFrame, max_points: int) -> pd.DataFrame:
 
 def plot_main(df_time_indexed: pd.DataFrame, selected: List[str], axis_map: Dict[str, str], height: int):
     """
-    Верхний «свободный» график с ДВУМЯ осями Y (A1 слева, A2 справа).
+    Верхний «свободный» график с двумя осями Y (A1 слева, A2 справа).
     selected: список колонок
     axis_map: {column -> "A1"|"A2"}
     """
@@ -105,42 +105,38 @@ def plot_main(df_time_indexed: pd.DataFrame, selected: List[str], axis_map: Dict
         st.info("Выберите серии для верхнего графика.")
         return
 
-    # Прореживаем для отзывчивости
+    # Прореживаем точки для отзывчивости
     df_plot = downsample_stride(df_time_indexed[selected], MAX_POINTS_MAIN)
 
-    # Настройка макета
-    layout_kwargs = dict(
+    import plotly.graph_objects as go
+    fig = go.Figure()
+
+    # Базовая раскладка (без спорных свойств)
+    fig.update_layout(
         margin=dict(t=36, r=16, b=40, l=60),
         height=height,
-        xaxis=dict(title="Время", showspikes=True, spikemode="across", spikethickness=1),
         plot_bgcolor="#0b0f14",
         paper_bgcolor="#0b0f14",
         legend=dict(orientation="h"),
+        xaxis=dict(title=dict(text="Время")),
+        yaxis=dict(title=dict(text="A1"), gridcolor="#1a2430"),
+        yaxis2=dict(title=dict(text="A2"), overlaying="y", side="right"),
     )
 
-    # A1 — левая, A2 — правая поверх A1
-    yaxes = {
-        "A1": dict(title="A1", titlefont=dict(size=12), tickfont=dict(size=11), gridcolor="#1a2430"),
-        "A2": dict(title="A2", overlaying="y", side="right"),
-    }
-
-    fig = go.Figure()
-    layout_kwargs["yaxis"]  = yaxes["A1"]
-    layout_kwargs["yaxis2"] = yaxes["A2"]
-
-    # Заголовки осей — по первой серии на каждой оси
+    # Заголовки осей — по первой серии, попавшей на конкретную ось
     axis_first_title: Dict[str, str] = {}
     for col in selected:
-        ax = axis_map.get(col, "A1")  # по умолчанию A1
+        ax = axis_map.get(col, "A1")
         if ax not in axis_first_title:
             axis_first_title[ax] = col
-            suffix = "" if ax == "A1" else "2"
-            layout_kwargs[f"yaxis{suffix}"]["title"] = col
+            if ax == "A1":
+                fig.update_layout(yaxis=dict(title=dict(text=col)))
+            else:
+                fig.update_layout(yaxis2=dict(title=dict(text=col)))
 
     # Добавляем серии
     for col in selected:
-        axis_code = axis_map.get(col, "A1")  # A1|A2
-        yref = "y" if axis_code == "A1" else "y2"
+        yref = "y" if axis_map.get(col, "A1") == "A1" else "y2"
         fig.add_trace(
             go.Scattergl(
                 x=df_plot.index,
@@ -152,8 +148,7 @@ def plot_main(df_time_indexed: pd.DataFrame, selected: List[str], axis_map: Dict
             )
         )
 
-    fig.update_layout(**layout_kwargs)
-    st.plotly_chart(fig, use_container_width=True, theme=None)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def plot_group(
