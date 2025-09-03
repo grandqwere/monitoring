@@ -118,20 +118,18 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
 
     theme_base = st.get_option("theme.base") or "light"
 
-    # === Ключи зависят от даты и интервала (чтобы графики точно пересоздавались) ===
+    # === Ключи графиков зависят от даты и интервала (чтобы не путались при переключении) ===
     agg_key = agg_rule  # '20s'|'1min'|'2min'|'5min'
     all_token_daily = f"{ALL_TOKEN}_{day_key}_{agg_key}"
 
-    # --- Сводный график (контролы ИДЕНТИЧНЫ часовым: мягкая логика + общий префикс) ---
+    # --- Сводный график (контролы ИДЕНТИЧНЫ часовым: без префиксов, как в hourly) ---
     token_main = refresh_bar("Суточный сводный график", "daily_main")
     default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
 
-    # ВАЖНО: тот же вызов, что и в часовом — strict по умолчанию (мягко), key_prefix такой же
+    # Важно: ровно как в часовом — без key_prefix и strict, базовые ключи main_fields / norm_*
     selected_main, separate_set = render_summary_controls(
         list(df_mean.columns),
-        default_main,
-        key_prefix="hourly__",  # как в часовом
-        # strict=False по умолчанию
+        default_main
     )
 
     fig_main = daily_main_chart(
@@ -149,13 +147,13 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     # --- Группы (используют тот же df_mean) ---
     render_power_group(df_mean, PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Токи фаз L1–L3", "daily_grp_curr", df_mean,
-                 ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN=all_token_daily)
+                 ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Напряжение (фазное) L1–L3", "daily_grp_urms", df_mean,
-                 ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN=all_token_daily)
+                 ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "daily_grp_uline", df_mean,
-                 ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN=all_token_daily)
+                 ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Коэффициент мощности (PF)", "daily_grp_pf", df_mean,
-                 ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN=all_token_daily)
+                 ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
 
     # Частота (если есть)
     freq_cols = [
@@ -167,6 +165,6 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     ]
     if freq_cols:
         render_group("Частота сети", "daily_grp_freq", df_mean, freq_cols,
-                     PLOT_HEIGHT, theme_base, ALL_TOKEN=all_token_daily)
+                     PLOT_HEIGHT, theme_base, all_token_daily)
 
     st.stop()
