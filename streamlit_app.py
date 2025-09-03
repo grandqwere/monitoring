@@ -116,7 +116,11 @@ if sel_date_for_hl:
             hl_for_date.add(h)
 
 st.markdown("### Дата и час (S3)")
-picked_date, picked_hour = render_date_hour_picker(loaded_hours_for_selected_date=hl_for_date)
+try:
+    picked_date, picked_hour = render_date_hour_picker(loaded_hours_for_selected_date=hl_for_date)
+except TypeError:
+    # старая версия ui/picker.py без аргумента — вызываем без него
+    picked_date, picked_hour = render_date_hour_picker()
 
 # выбор из пикера -> «Показать» этот час
 if picked_date and picked_hour is not None:
