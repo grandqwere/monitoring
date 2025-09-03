@@ -12,7 +12,7 @@ import streamlit as st
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
-from core.s3_paths import build_key_for
+from core.s3_paths import build_all_key_for
 
 
 # ------------------------- CSV: локальный ------------------------- #
@@ -106,7 +106,7 @@ def available_hours_for_date(d: date, cache_buster: int = 0) -> Dict[int, str]:
     """
     result: Dict[int, str] = {}
     for h in range(24):
-        key = build_key_for(d, h)
+        key = build_all_key_for(d, h)
         try:
             if head_exists(key):
                 result[h] = key
