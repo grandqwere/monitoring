@@ -41,12 +41,11 @@ def main_chart(
     separate_axes: Set[str] | None = None,
 ) -> go.Figure:
     """
-    Сводный график:
+    Сводный график (часовой режим):
       - базовая левая ось (для серий без галочки),
-      - любые дополнительные ЛЕВЫЕ оси для серий из separate_axes,
-      - у доп. осей только цифры (цвет = цвет линии), без заголовков,
+      - доп. ЛЕВЫЕ оси для серий из separate_axes,
       - легенда снизу,
-      - если есть separate_axes -> рисуем «бумажную» сетку (paper), а гриды осей выключаем.
+      - при отдельных осях рисуем «бумажную» сетку (paper).
     """
     params = _theme_params(theme_base)
     separate_axes = separate_axes or set()
@@ -80,11 +79,10 @@ def main_chart(
         return fig
     df_plot = _stride(df[present], MAX_POINTS_MAIN)
 
-    # Стабильные цвета: цифры осей = цвет линии
     cw = list(params["colorway"])
     color_map: Dict[str, str] = {c: cw[i % len(cw)] for i, c in enumerate(present)}
 
-    # 1) Базовые серии -> обычная ось y
+    # Базовые серии
     base_series = [c for c in present if c not in separate_axes]
     for c in base_series:
         fig.add_trace(
@@ -95,32 +93,29 @@ def main_chart(
             )
         )
 
-    # 2) Доп. ЛЕВЫЕ оси для отмеченных серий — слева -> вправо
-    pos_start = 0.02   # первая прямо у левого края
-    pos_step  = 0.05   # следующие чуть правее
+    # Доп. ЛЕВЫЕ оси
+    pos_start = 0.02
+    pos_step  = 0.05
     pos_max   = 0.95
 
-    axis_idx = 1  # yaxis — базовая; дальше yaxis2, yaxis3, ...
+    axis_idx = 1
     for j, c in enumerate([s for s in present if s in separate_axes]):
         axis_idx += 1
         yaxis_name = f"yaxis{axis_idx}"
         yref = f"y{axis_idx}"
-
         pos_val = min(pos_max, pos_start + j * pos_step)
 
-        fig.update_layout(
-            **{
-                yaxis_name: dict(
-                    overlaying="y",
-                    side="left",
-                    position=pos_val,
-                    showgrid=False,
-                    zeroline=False,
-                    title=None,
-                    tickfont=dict(color=color_map[c]),
-                )
-            }
-        )
+        fig.update_layout(**{
+            yaxis_name: dict(
+                overlaying="y",
+                side="left",
+                position=pos_val,
+                showgrid=False,
+                zeroline=False,
+                title=None,
+                tickfont=dict(color=color_map[c]),
+            )
+        })
 
         fig.add_trace(
             go.Scattergl(
@@ -130,7 +125,7 @@ def main_chart(
             )
         )
 
-    # 3) «Бумажная» сетка, если есть отдельные оси
+    # «Бумажная» сетка, если есть отдельные оси
     if len(separate_axes) > 0:
         shapes = []
         for y in (0.2, 0.4, 0.6, 0.8):
@@ -194,6 +189,7 @@ def group_panel(
 
     return fig
 
+
 def daily_main_chart(
     df_mean: pd.DataFrame,
     df_p95: pd.DataFrame | None,
@@ -203,11 +199,11 @@ def daily_main_chart(
     height: int,
     theme_base: str | None = None,
     separate_axes: Set[str] | None = None,
-    show_p95: bool = True,
-    show_extrema: bool = True,
+    show_p95: bool = False,
+    show_extrema: bool = False,
 ) -> go.Figure:
     """
-    Суточный сводный: линия mean; необязательная оболочка p95; маркеры max/min.
+    Суточный сводный: линия mean; (опционально p95 и маркеры max/min — выключены по умолчанию).
     Логику множества осей слева сохраняем как в main_chart.
     """
     params = _theme_params(theme_base)
@@ -226,6 +222,9 @@ def daily_main_chart(
         legend=dict(orientation="h", yanchor="top", y=-0.15, x=0.5, xanchor="center", title=None),
         colorway=list(params["colorway"]),
     )
+
+    if df_mean is None or df_mean.empty or not series:
+        return fig
 
     present = [c for c in series if c in df_mean.columns]
     if not present:
@@ -258,33 +257,7 @@ def daily_main_chart(
             hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"
         ))
 
-    # Оболочка p95
-    if show_p95 and (df_p95 is not None):
-        for c in present:
-            if c in df_p95.columns:
-                fig.add_trace(go.Scattergl(
-                    x=df_p95.index, y=df_p95[c], mode="lines", name=f"{c} · p95",
-                    line=dict(color=color_map[c], dash="dot"),
-                    hovertemplate="%{x}<br>"+c+" p95: %{y}<extra></extra>",
-                    showlegend=True,
-                ))
-
-    # Маркеры экстремумов
-    if show_extrema and (df_max is not None or df_min is not None):
-        if df_max is not None:
-            for c in present:
-                if c in df_max.columns:
-                    fig.add_trace(go.Scattergl(
-                        x=df_max.index, y=df_max[c], mode="markers", name=f"{c} · max",
-                        marker=dict(symbol="triangle-up", size=6), hovertemplate="%{x}<br>"+c+" max: %{y}<extra></extra>"
-                    ))
-        if df_min is not None:
-            for c in present:
-                if c in df_min.columns:
-                    fig.add_trace(go.Scattergl(
-                        x=df_min.index, y=df_min[c], mode="markers", name=f"{c} · min",
-                        marker=dict(symbol="triangle-down", size=6), hovertemplate="%{x}<br>"+c+" min: %{y}<extra></extra>"
-                    ))
+    # По умолчанию p95/extrema выключены — параметры оставлены на будущее.
 
     if len(separate_axes) > 0:
         shapes = []
@@ -294,4 +267,3 @@ def daily_main_chart(
         fig.update_layout(shapes=shapes)
 
     return fig
-
