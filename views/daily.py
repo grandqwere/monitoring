@@ -26,14 +26,14 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _reset_on_day_change(day):
-    """Если день сменился — сброс локальных состояний для суточного и rerun."""
+    """На смену дня сбрасываем локальные состояния суточного режима и сразу перерисовываем страницу."""
     day_key = day.strftime("%Y%m%d")
     prev = st.session_state.get("__daily_active_day_key")
     if prev != day_key:
         st.session_state["__daily_active_day_key"] = day_key
-        # Сброс локальных состояний суточных контролов
+        # убрать всё, что относится к суточным контролам/агрегированию предыдущего дня
         for k in list(st.session_state.keys()):
-            if k.startswith("daily__") or k.startswith(f"daily_agg_rule_"):
+            if k.startswith("daily__") or k.startswith("daily_agg_rule_"):
                 del st.session_state[k]
         st.rerun()
 
@@ -55,21 +55,18 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         st.info("Выберите дату.")
         st.stop()
 
-    # Жёстко фиксируем смену дня (устраняет «через раз остаётся старая дата»)
+    # Жёстко фиксируем смену дня (чтобы не «залипала» старая дата)
     _reset_on_day_change(day)
 
-    # --- Загрузка 24 часов выбранной даты (панель раскрыта сразу) ---
+    # --- Загрузка 24 часов выбранной даты (панель сразу раскрыта) ---
     frames: list[pd.DataFrame] = []
-    missing_msgs: list[str] = []
     try:
         with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы")
             for i, h in enumerate(range(24), start=1):
-                dfh = load_hour(day, h)  # при отсутствии файла — просто фиксируем сообщением ниже
+                dfh = load_hour(day, h)  # при отсутствии файла тихо пропускаем
                 if dfh is not None and not dfh.empty:
                     frames.append(dfh)
-                else:
-                    missing_msgs.append(f"Нет файла за: {day.isoformat()} {h:02d}:00")
                 prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
 
             if not frames:
@@ -84,16 +81,8 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
             dfh = load_hour(day, h)
             if dfh is not None and not dfh.empty:
                 frames.append(dfh)
-            else:
-                missing_msgs.append(f"Нет файла за: {day.isoformat()} {h:02d}:00")
         if not frames:
             st.stop()
-
-    # Покажем список отсутствующих часов (если есть)
-    if missing_msgs:
-        with st.expander("Отсутствующие часы", expanded=False):
-            for msg in missing_msgs:
-                st.caption(msg)
 
     # Подготовка набора
     df_day = pd.concat(frames).sort_index()
@@ -114,7 +103,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     labels = [l for l, _ in OPTIONS]
 
     day_key = day.strftime("%Y%m%d")
-    radio_key = f"daily_agg_rule_{day_key}"  # отдельное состояние на каждый день
+    radio_key = f"daily_agg_rule_{day_key}"  # состояние на каждый день отдельно
     current_rule = st.session_state.get(radio_key, "1min")
     if current_rule not in rules:
         current_rule = "1min"
@@ -127,7 +116,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         index=idx,
         horizontal=True,
         label_visibility="collapsed",
-        key=f"{radio_key}__label",  # ключ компонента — уникален для даты
+        key=f"{radio_key}__label",  # уникальный ключ радиокнопок для даты
     )
     new_rule = dict(OPTIONS)[chosen_label]
     if new_rule != current_rule:
@@ -135,14 +124,14 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         st.rerun()
     agg_rule = st.session_state.get(radio_key, new_rule)
 
-    # Агрегация по выбранному интервалу (используем только mean)
+    # Агрегация по выбранному интервалу (только mean)
     df_day_num = df_day[[c for c in num_cols]]
     agg = aggregate_by(df_day_num, rule=agg_rule)
     df_mean = agg["mean"]
 
     theme_base = st.get_option("theme.base") or "light"
 
-    # --- Сводный график: отдельный namespace состояний для суточного ---
+    # --- Сводный график (отдельный namespace для суток) ---
     token_main = refresh_bar("Суточный сводный график", "daily_main")
     default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
 
@@ -152,10 +141,10 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         key_prefix="daily__"
     )
 
-    # Токен состояния (чтобы график пересоздавался при изменении чекбоксов/списка серий)
+    # Пересоздаём график при любом изменении выбора
     sel_token = "__".join(selected_main) if selected_main else "none"
     norm_token = "__".join(sorted(separate_set)) if separate_set else "none"
-    agg_key = agg_rule  # '20s'|'1min'|'2min'|'5min'
+    agg_key = agg_rule
     chart_key = f"daily_main_{ALL_TOKEN}_{day_key}_{agg_key}_{sel_token}_{norm_token}_{token_main}"
 
     fig_main = main_chart(
@@ -172,7 +161,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         key=chart_key,
     )
 
-    # --- Группы (используют тот же df_mean) ---
+    # --- Группы (тот же df_mean) ---
     all_token_daily = f"{ALL_TOKEN}_{day_key}_{agg_key}"
     render_power_group(df_mean, PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Токи фаз L1–L3", "daily_grp_curr", df_mean,
