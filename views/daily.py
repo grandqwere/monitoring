@@ -1,3 +1,4 @@
+# views/daily.py
 from __future__ import annotations
 import pandas as pd
 import streamlit as st
@@ -24,6 +25,19 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _reset_on_day_change(day):
+    """Если день сменился — сброс локальных состояний для суточного и rerun."""
+    day_key = day.strftime("%Y%m%d")
+    prev = st.session_state.get("__daily_active_day_key")
+    if prev != day_key:
+        st.session_state["__daily_active_day_key"] = day_key
+        # Сброс локальных состояний суточных контролов
+        for k in list(st.session_state.keys()):
+            if k.startswith("daily__") or k.startswith(f"daily_agg_rule_"):
+                del st.session_state[k]
+        st.rerun()
+
+
 def render_daily_mode(ALL_TOKEN: int) -> None:
     st.markdown("### День")
     day = render_day_picker()
@@ -41,34 +55,45 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         st.info("Выберите дату.")
         st.stop()
 
+    # Жёстко фиксируем смену дня (устраняет «через раз остаётся старая дата»)
+    _reset_on_day_change(day)
+
     # --- Загрузка 24 часов выбранной даты (панель раскрыта сразу) ---
     frames: list[pd.DataFrame] = []
+    missing_msgs: list[str] = []
     try:
         with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы")
             for i, h in enumerate(range(24), start=1):
-                dfh = load_hour(day, h)  # при отсутствии файла — тихо пропускаем
+                dfh = load_hour(day, h)  # при отсутствии файла — просто фиксируем сообщением ниже
                 if dfh is not None and not dfh.empty:
                     frames.append(dfh)
+                else:
+                    missing_msgs.append(f"Нет файла за: {day.isoformat()} {h:02d}:00")
                 prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
 
             if not frames:
                 status.update(label="Нет данных за выбранную дату.", state="error")
-                st.info("Нет данных за выбранную дату.")
                 st.stop()
 
             # Только финальное сообщение
             status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
     except Exception:
         # Фолбэк для старых версий Streamlit без st.status
-        with st.spinner(f"Готовим данные за {day.isoformat()}…"):
-            for h in range(24):
-                dfh = load_hour(day, h)
-                if dfh is not None and not dfh.empty:
-                    frames.append(dfh)
-            if not frames:
-                st.info("Нет данных за выбранную дату.")
-                st.stop()
+        for h in range(24):
+            dfh = load_hour(day, h)
+            if dfh is not None and not dfh.empty:
+                frames.append(dfh)
+            else:
+                missing_msgs.append(f"Нет файла за: {day.isoformat()} {h:02d}:00")
+        if not frames:
+            st.stop()
+
+    # Покажем список отсутствующих часов (если есть)
+    if missing_msgs:
+        with st.expander("Отсутствующие часы", expanded=False):
+            for msg in missing_msgs:
+                st.caption(msg)
 
     # Подготовка набора
     df_day = pd.concat(frames).sort_index()
@@ -81,7 +106,6 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         and df_day[c].notna().any()
     ]
     if not num_cols:
-        st.info("Нет пригодных числовых данных за выбранную дату.")
         st.stop()
 
     # --- Селектор интервала усреднения (после финального сообщения) ---
@@ -118,11 +142,10 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
 
     theme_base = st.get_option("theme.base") or "light"
 
-    # === Сводный график: тот же контроллер, что в часовом ===
+    # --- Сводный график: отдельный namespace состояний для суточного ---
     token_main = refresh_bar("Суточный сводный график", "daily_main")
     default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
 
-    # Важно: отдельный namespace для суток, чтобы не вмешивались состояния часового
     selected_main, separate_set = render_summary_controls(
         list(df_mean.columns),
         default_main,
@@ -133,8 +156,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     sel_token = "__".join(selected_main) if selected_main else "none"
     norm_token = "__".join(sorted(separate_set)) if separate_set else "none"
     agg_key = agg_rule  # '20s'|'1min'|'2min'|'5min'
-    day_token = f"{day_key}_{agg_key}_{sel_token}_{norm_token}"
-    chart_key = f"daily_main_{ALL_TOKEN}_{day_token}_{token_main}"
+    chart_key = f"daily_main_{ALL_TOKEN}_{day_key}_{agg_key}_{sel_token}_{norm_token}_{token_main}"
 
     fig_main = main_chart(
         df=df_mean,
