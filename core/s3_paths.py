@@ -10,14 +10,19 @@ def _s3_secrets() -> dict:
     s.setdefault("prefix", s.get("prefix", ""))
     return s
 
-def _join_prefix(prefix: str, subdir: str | None) -> str:
-    p = prefix or ""
-    if p and not p.endswith("/"):
-        p += "/"
-    d = (subdir or "").strip("/")
-    if d:
-        p += d + "/"
-    return p
+def _join_prefix(prefix: str, subpath: str | None) -> str:
+    """Склейка prefix + subpath (оба могут быть пустыми). Гарантируем завершающий /."""
+    p = (prefix or "").rstrip("/")
+    s = (subpath or "").strip("/")
+    if p and s:
+        base = f"{p}/{s}/"
+    elif p:
+        base = f"{p}/"
+    elif s:
+        base = f"{s}/"
+    else:
+        base = ""
+    return base
 
 def _render_filename(tpl: str, d: date, hour: int) -> str:
     return (
@@ -29,10 +34,7 @@ def _render_filename(tpl: str, d: date, hour: int) -> str:
     )
 
 def build_key_for(d: date, hour: int, subdir: str | None = None) -> str:
-    """
-    Универсальный сборщик ключей: prefix + (subdir/) + filename.
-    subdir можно не задавать — тогда только prefix + filename.
-    """
+    """Универсальный сборщик ключей: prefix + (subdir/) + filename."""
     s = _s3_secrets()
     fname = _render_filename(s["key_template"], d, hour)
     base = _join_prefix(s["prefix"], subdir)
@@ -40,7 +42,9 @@ def build_key_for(d: date, hour: int, subdir: str | None = None) -> str:
 
 def build_all_key_for(d: date, hour: int) -> str:
     """
-    Специально для часовых файлов из подпапки All/.
-    Итоговый ключ: <prefix>All/<filename>
+    Часовые файлы из папки All/ с дневными подпапками:
+    <prefix>/All/YYYY.MM.DD/All-YYYY.MM.DD-HH.00.csv
     """
-    return build_key_for(d, hour, subdir="All")
+    day_folder = f"{d.year:04d}.{d.month:02d}.{d.day:02d}"
+    subpath = f"All/{day_folder}"
+    return build_key_for(d, hour, subdir=subpath)
