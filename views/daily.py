@@ -5,7 +5,7 @@ import streamlit as st
 from core.config import HIDE_ALWAYS, DEFAULT_PRESET, PLOT_HEIGHT
 from core.aggregate import aggregate_by
 from core.hour_loader import load_hour
-from core.plotting import daily_main_chart
+from core.plotting import main_chart            # ← используем тот же, что в часовом!
 from ui.refresh import refresh_bar
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
@@ -112,7 +112,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     agg_rule = st.session_state.get(radio_key, new_rule)
 
     # Агрегация по выбранному интервалу (используем только mean)
-    df_day_num = df_day[[c for c in num_cols]]  # явная копия набора
+    df_day_num = df_day[[c for c in num_cols]]
     agg = aggregate_by(df_day_num, rule=agg_rule)
     df_mean = agg["mean"]
 
@@ -122,20 +122,23 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     agg_key = agg_rule  # '20s'|'1min'|'2min'|'5min'
     all_token_daily = f"{ALL_TOKEN}_{day_key}_{agg_key}"
 
-    # --- Сводный график (контролы ИДЕНТИЧНЫ часовым: без префиксов, как в hourly) ---
+    # --- Сводный график: ровно как в часовом (те же контролы и логика) ---
     token_main = refresh_bar("Суточный сводный график", "daily_main")
     default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
 
-    # Важно: ровно как в часовом — без key_prefix и strict, базовые ключи main_fields / norm_*
+    # Используем те же контролы, что и в часовом. Можно без префикса или с "hourly__" — оба ок.
     selected_main, separate_set = render_summary_controls(
         list(df_mean.columns),
-        default_main
+        default_main,
+        key_prefix="hourly__"
     )
 
-    fig_main = daily_main_chart(
-        df_mean=df_mean, df_p95=None, df_max=None, df_min=None,
-        series=selected_main, height=PLOT_HEIGHT, theme_base=theme_base,
-        separate_axes=set(separate_set), show_p95=False, show_extrema=False,
+    fig_main = main_chart(                    # ← тот же рендерер, что и в часовом
+        df=df_mean,
+        series=selected_main,
+        height=PLOT_HEIGHT,
+        theme_base=theme_base,
+        separate_axes=set(separate_set),
     )
     st.plotly_chart(
         fig_main,
