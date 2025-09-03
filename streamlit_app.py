@@ -15,7 +15,7 @@ from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
 from core.s3_paths import build_all_key_for
 
-from core.aggregate import aggregate_20s
+from core.aggregate import aggregate_by
 from core.plotting import daily_main_chart
 from ui.day import render_day_picker, day_nav_buttons, shift_day
 from ui.summary import daily_overlays_controls
@@ -114,14 +114,62 @@ if mode_daily:
 
     # Собираем 24 часа (без «дозагрузки» в интерфейс — только один день на экране)
     frames = []
-    for h in range(24):
-        dfh = _load_hour(day, h)  # покажет st.info если файла нет — ок
-        if dfh is not None and not dfh.empty:
-            frames.append(dfh)
-
-    if not frames:
-        st.info("Нет данных за выбранный день.")
-        st.stop()
+    raw_points = 0
+    
+    # Показ статуса/прогресса
+    try:
+        with st.status("Готовим данные за день…", expanded=False) as status:
+            prog = st.progress(0, text="Загружаем часы")
+            ok = 0
+            for i, h in enumerate(range(24), start=1):
+                dfh = _load_hour(day, h)  # при отсутствии файла будет st.info — это ок
+                if dfh is not None and not dfh.empty:
+                    frames.append(dfh)
+                    raw_points += len(dfh)
+                    ok += 1
+                prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
+            status.update(label=f"Загружено часов: {ok}/24. Агрегируем данные раз в минуту…", state="running")
+    
+            if not frames:
+                status.update(label="Нет данных за выбранный день.", state="error")
+                st.info("Нет данных за выбранный день.")
+                st.stop()
+    
+            df_day = pd.concat(frames).sort_index()
+            num_cols = [c for c in df_day.columns if c not in HIDE_ALWAYS and pd.api.types.is_numeric_dtype(df_day[c])]
+            if not num_cols:
+                status.update(label="Числовые колонки за день не найдены.", state="error")
+                st.info("Числовые колонки за день не найдены.")
+                st.stop()
+    
+            # Агрегация 1 минута
+            agg = aggregate_by(df_day[num_cols], rule="1min")
+            df_mean, df_p95, df_max, df_min = agg["mean"], agg["p95"], agg["max"], agg["min"]
+    
+            status.update(
+                label=f"Готово: исходных точек {raw_points} → после агрегации {len(df_mean)} точек на серию (1 мин).",
+                state="complete"
+            )
+    except Exception:
+        # Фолбэк для старых версий Streamlit без st.status
+        with st.spinner("Готовим данные за день…"):
+            prog = st.progress(0, text="Загружаем часы")
+            for i, h in enumerate(range(24), start=1):
+                dfh = _load_hour(day, h)
+                if dfh is not None and not dfh.empty:
+                    frames.append(dfh)
+                    raw_points += len(dfh)
+                prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
+            if not frames:
+                st.info("Нет данных за выбранный день.")
+                st.stop()
+            df_day = pd.concat(frames).sort_index()
+            num_cols = [c for c in df_day.columns if c not in HIDE_ALWAYS and pd.api.types.is_numeric_dtype(df_day[c])]
+            if not num_cols:
+                st.info("Числовые колонки за день не найдены.")
+                st.stop()
+            agg = aggregate_by(df_day[num_cols], rule="1min")
+            df_mean, df_p95, df_max, df_min = agg["mean"], agg["p95"], agg["max"], agg["min"]
 
     df_day = pd.concat(frames).sort_index()
 
@@ -242,6 +290,9 @@ st.plotly_chart(
     config={"responsive": True},
     key=f"main_{ALL_TOKEN}_{token_main}",  # ← токен в ключе
 )
+
+st.caption(f"∑ часов на день: {len(frames)}/24 • Агрегация: 1 мин • "
+           f"Плотность: {len(df_mean)} точек/серию")
 
 # Группы
 render_power_group(df_current, PLOT_HEIGHT, theme_base, ALL_TOKEN)
