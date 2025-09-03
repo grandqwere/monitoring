@@ -5,52 +5,34 @@ import streamlit as st
 
 from core import state
 from core.config import HIDE_ALWAYS, DEFAULT_PRESET, PLOT_HEIGHT
-from core.data_io import read_csv_local, s3_build_index, read_csv_s3
-from core.data_io import build_availability  # если нужно где-то ещё
+from core.data_io import read_csv_s3
 from core.prepare import normalize
 from core.plotting import main_chart
 from ui.refresh import draw_refresh_all
-from ui.calendar import render_calendar_and_pick
+from ui.picker import render_date_hour_picker
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
 
 st.set_page_config(page_title="Сводные графики электроизмерений", layout="wide")
 state.init_once()
 
+# Глобальная кнопка «Обновить всё»
 ALL_TOKEN = draw_refresh_all()
 
-# Сайдбар: локальная загрузка (запасной вариант)
-with st.sidebar:
-    st.markdown("### Загрузите CSV (локально)")
-    uploaded = st.file_uploader("Файл CSV (1 час = 3600 строк)", type=["csv"])
+# Пикер даты/часа с HEAD-проверкой (без сканирования бакета)
+st.markdown("### Дата и час (S3)")
+selected_date, chosen_key = render_date_hour_picker(cache_buster=ALL_TOKEN)
 
-df_local = None
-if uploaded:
-    df_local = normalize(read_csv_local(uploaded))
+if not chosen_key:
+    st.info("Выберите день и час (активные часы подсвечены).")
+    st.stop()
 
-# Индексация S3
+# Чтение CSV с S3
 try:
-    index_df = s3_build_index(cache_buster=ALL_TOKEN)
+    df_current = normalize(read_csv_s3(chosen_key))
+    st.success(f"Загружено с S3: `{chosen_key}`")
 except Exception as e:
-    st.warning(f"Не удалось подключиться к S3: {e}")
-    index_df = pd.DataFrame(columns=["key", "dt", "date", "hour"])
-
-# Календарь выбора часа
-st.markdown("### Выбор времени (S3)")
-selected_day, chosen_key = render_calendar_and_pick(index_df, cache_buster=ALL_TOKEN)
-
-# Получаем текущий DataFrame: либо S3-час, либо локальный запасной файл
-df_current = None
-if chosen_key:
-    try:
-        df_current = normalize(read_csv_s3(chosen_key))
-        st.success(f"Загружено с S3: `{chosen_key}`")
-    except Exception as e:
-        st.error(f"Ошибка чтения с S3: {e}")
-elif df_local is not None:
-    df_current = df_local
-
-if df_current is None:
+    st.error(f"Ошибка чтения с S3: {e}")
     st.stop()
 
 # Числовые колонки
@@ -80,7 +62,7 @@ render_group("Токи фаз L1–L3", "grp_curr", df_current, ["Irms_L1", "Irm
 render_group("Напряжение (фазное) L1–L3", "grp_urms", df_current, ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
 render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "grp_uline", df_current, ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
 render_group("Коэффициент мощности (PF)", "grp_pf", df_current, ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
-# Частота — автоматический поиск
-freq_cols = [c for c in df_current.columns if pd.api.types.is_numeric_dtype(df_current[c]) and any(x in c.lower() for x in ["freq","frequency","hz"]) or c.lower()=="f"]
+# Частота — поиск по именам
+freq_cols = [c for c in df_current.columns if pd.api.types.is_numeric_dtype(df_current[c]) and (("freq" in c.lower()) or ("frequency" in c.lower()) or ("hz" in c.lower()) or (c.lower()=="f"))]
 if freq_cols:
     render_group("Частота сети", "grp_freq", df_current, freq_cols, PLOT_HEIGHT, theme_base, ALL_TOKEN)
