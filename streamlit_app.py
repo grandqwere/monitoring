@@ -15,7 +15,7 @@ from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
 from core.s3_paths import build_all_key_for
 
-st.set_page_config(page_title="Сводные графики электроизмерений", layout="wide")
+st.set_page_config(page_title="Часовые графики электроизмерений", layout="wide")
 state.init_once()
 
 # ---------------- Заголовок и «Обновить всё» ----------------
@@ -141,7 +141,7 @@ if not num_cols:
 theme_base = st.get_option("theme.base") or "light"
 
 # Сводный график
-_ = refresh_bar("Сводный график", "main")
+token_main = refresh_bar("Сводный график", "main")
 default_main = [c for c in DEFAULT_PRESET if c in num_cols] or num_cols[:3]
 selected_main, separate_set = render_summary_controls(num_cols, default_main)
 
@@ -152,7 +152,12 @@ fig_main = main_chart(
     theme_base=theme_base,
     separate_axes=set(separate_set),
 )
-st.plotly_chart(fig_main, use_container_width=True, config={"responsive": True}, key=f"main_{ALL_TOKEN}")
+st.plotly_chart(
+    fig_main,
+    use_container_width=True,
+    config={"responsive": True},
+    key=f"main_{ALL_TOKEN}_{token_main}",  # ← токен в ключе
+)
 
 # Группы
 render_power_group(df_current, PLOT_HEIGHT, theme_base, ALL_TOKEN)
