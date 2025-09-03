@@ -3,10 +3,11 @@ import pandas as pd
 
 __all__ = ["aggregate_by"]
 
-def aggregate_by(df: pd.DataFrame, rule: str = "1min") -> dict[str, pd.DataFrame]:
+def aggregate_by(df: pd.DataFrame, rule: str = "5min") -> dict[str, pd.DataFrame]:
     """
-    Агрегация по DatetimeIndex с заданным правилом ('1min', '20s' и т.п.).
-    Возвращает: словарь DataFrame'ов — mean, p95, max, min — только по числовым колонкам.
+    Агрегация по DatetimeIndex с заданным правилом ('5min', '1min', '20s' и т.п.).
+    Возвращает словарь DataFrame'ов: mean, p95, max, min — только по числовым колонкам.
+    В нашем кейсе используем только 'mean' (остальные ключи есть, но можно игнорировать).
     """
     if df is None or df.empty:
         return {"mean": df, "p95": df, "max": df, "min": df}
