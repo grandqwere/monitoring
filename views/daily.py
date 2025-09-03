@@ -5,7 +5,7 @@ import streamlit as st
 from core.config import HIDE_ALWAYS, DEFAULT_PRESET, PLOT_HEIGHT
 from core.aggregate import aggregate_by
 from core.hour_loader import load_hour
-from core.plotting import main_chart            # ← используем тот же, что в часовом!
+from core.plotting import main_chart
 from ui.refresh import refresh_bar
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
@@ -41,13 +41,13 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         st.info("Выберите дату.")
         st.stop()
 
-    # --- Загрузка 24 часов выбранной даты (с прогрессом) ---
+    # --- Загрузка 24 часов выбранной даты (панель раскрыта сразу) ---
     frames: list[pd.DataFrame] = []
     try:
-        with st.status(f"Готовим данные за {day.isoformat()}…", expanded=False) as status:
+        with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы")
             for i, h in enumerate(range(24), start=1):
-                dfh = load_hour(day, h)  # при отсутствии файла — мягкое st.info
+                dfh = load_hour(day, h)  # при отсутствии файла — тихо пропускаем
                 if dfh is not None and not dfh.empty:
                     frames.append(dfh)
                 prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
@@ -118,22 +118,25 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
 
     theme_base = st.get_option("theme.base") or "light"
 
-    # === Ключи графиков зависят от даты и интервала (чтобы не путались при переключении) ===
-    agg_key = agg_rule  # '20s'|'1min'|'2min'|'5min'
-    all_token_daily = f"{ALL_TOKEN}_{day_key}_{agg_key}"
-
-    # --- Сводный график: ровно как в часовом (те же контролы и логика) ---
+    # === Сводный график: тот же контроллер, что в часовом ===
     token_main = refresh_bar("Суточный сводный график", "daily_main")
     default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
 
-    # Используем те же контролы, что и в часовом. Можно без префикса или с "hourly__" — оба ок.
+    # Важно: отдельный namespace для суток, чтобы не вмешивались состояния часового
     selected_main, separate_set = render_summary_controls(
         list(df_mean.columns),
         default_main,
-        key_prefix="hourly__"
+        key_prefix="daily__"
     )
 
-    fig_main = main_chart(                    # ← тот же рендерер, что и в часовом
+    # Токен состояния (чтобы график пересоздавался при изменении чекбоксов/списка серий)
+    sel_token = "__".join(selected_main) if selected_main else "none"
+    norm_token = "__".join(sorted(separate_set)) if separate_set else "none"
+    agg_key = agg_rule  # '20s'|'1min'|'2min'|'5min'
+    day_token = f"{day_key}_{agg_key}_{sel_token}_{norm_token}"
+    chart_key = f"daily_main_{ALL_TOKEN}_{day_token}_{token_main}"
+
+    fig_main = main_chart(
         df=df_mean,
         series=selected_main,
         height=PLOT_HEIGHT,
@@ -144,10 +147,11 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         fig_main,
         use_container_width=True,
         config={"responsive": True},
-        key=f"daily_main_{all_token_daily}_{token_main}",
+        key=chart_key,
     )
 
     # --- Группы (используют тот же df_mean) ---
+    all_token_daily = f"{ALL_TOKEN}_{day_key}_{agg_key}"
     render_power_group(df_mean, PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Токи фаз L1–L3", "daily_grp_curr", df_mean,
                  ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
