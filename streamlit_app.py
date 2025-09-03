@@ -15,11 +15,18 @@ from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
 from core.s3_paths import build_all_key_for
 
+from core.aggregate import aggregate_20s
+from core.plotting import daily_main_chart
+from ui.day import render_day_picker, day_nav_buttons, shift_day
+from ui.summary import daily_overlays_controls
+
+
 st.set_page_config(page_title="Часовые графики электроизмерений", layout="wide")
 state.init_once()
 
 # ---------------- Заголовок и «Обновить всё» ----------------
 ALL_TOKEN = draw_refresh_all()
+mode_daily = st.toggle("Режим: сутки", value=st.session_state.get("mode_daily", False), key="mode_daily")
 
 # --------- состояние отображаемых часов (макс. 2) ----------
 if "loaded_hours" not in st.session_state:
@@ -86,6 +93,83 @@ def _combined_df() -> pd.DataFrame:
 
 def _has_current() -> bool:
     return ("current_date" in st.session_state) and ("current_hour" in st.session_state)
+
+if mode_daily:
+    # ---------- СУТОЧНЫЙ РЕЖИМ ----------
+    st.markdown("### День (S3)")
+    day = render_day_picker()
+
+    # Навигация днями
+    prev_day, next_day = day_nav_buttons(enabled=day is not None)
+    if day and prev_day:
+        st.session_state["selected_day"] = shift_day(day, -1)
+        st.rerun()
+    if day and next_day:
+        st.session_state["selected_day"] = shift_day(day, +1)
+        st.rerun()
+
+    if not day:
+        st.info("Выберите дату.")
+        st.stop()
+
+    # Собираем 24 часа (без «дозагрузки» в интерфейс — только один день на экране)
+    frames = []
+    for h in range(24):
+        dfh = _load_hour(day, h)  # покажет st.info если файла нет — ок
+        if dfh is not None and not dfh.empty:
+            frames.append(dfh)
+
+    if not frames:
+        st.info("Нет данных за выбранный день.")
+        st.stop()
+
+    df_day = pd.concat(frames).sort_index()
+
+    num_cols = [c for c in df_day.columns if c not in HIDE_ALWAYS and pd.api.types.is_numeric_dtype(df_day[c])]
+    if not num_cols:
+        st.info("Числовые колонки за день не найдены.")
+        st.stop()
+
+    theme_base = st.get_option("theme.base") or "light"
+
+    # Контролы как в часах
+    token_main = refresh_bar("Суточный сводный график", "daily_main")
+    default_main = [c for c in DEFAULT_PRESET if c in num_cols] or num_cols[:3]
+    selected_main, separate_set = render_summary_controls(num_cols, default_main)
+    show_p95, show_ext = daily_overlays_controls()
+
+    # Агрегация 20с
+    agg = aggregate_20s(df_day[num_cols])
+    df_mean, df_p95, df_max, df_min = agg["mean"], agg["p95"], agg["max"], agg["min"]
+
+    # Рисуем
+    fig_main = daily_main_chart(
+        df_mean=df_mean, df_p95=df_p95, df_max=df_max, df_min=df_min,
+        series=selected_main, height=PLOT_HEIGHT, theme_base=theme_base,
+        separate_axes=set(separate_set), show_p95=show_p95, show_extrema=show_ext,
+    )
+    st.plotly_chart(
+        fig_main, use_container_width=True, config={"responsive": True},
+        key=f"daily_main_{ALL_TOKEN}_{token_main}",
+    )
+
+    # Нижние панели — показываем усреднённые значения (mean) за 20с, те же группы
+    render_power_group(df_mean, PLOT_HEIGHT, theme_base, ALL_TOKEN)
+    render_group("Токи фаз L1–L3", "daily_grp_curr", df_mean, ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
+    render_group("Напряжение (фазное) L1–L3", "daily_grp_urms", df_mean, ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
+    render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "daily_grp_uline", df_mean, ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
+    render_group("Коэффициент мощности (PF)", "daily_grp_pf", df_mean, ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
+
+    # Частота (если есть)
+    freq_cols = [c for c in df_mean.columns
+                 if pd.api.types.is_numeric_dtype(df_mean[c]) and (
+                     ("freq" in c.lower()) or ("frequency" in c.lower()) or ("hz" in c.lower()) or (c.lower() == "f")
+                 )]
+    if freq_cols:
+        render_group("Частота сети", "daily_grp_freq", df_mean, freq_cols, PLOT_HEIGHT, theme_base, ALL_TOKEN)
+
+    st.stop()
+
 
 # ---------------- Пикер даты/часа (с подсветкой реальных данных) ----------------
 st.markdown("### Дата и час (S3)")
