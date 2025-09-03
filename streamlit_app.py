@@ -40,8 +40,8 @@ def _load_hour(d: date_cls, h: int) -> pd.DataFrame | None:
         df = normalize(df_raw)
         st.session_state["hour_cache"][k] = df
         return df
-    except Exception as e:
-        st.error(f"Файл не найден или не читается: `{s3_key}`. {e}")
+    except Exception:
+        st.info(f"Нет файла за этот час: `{s3_key}`.")
         return None
 
 def _set_only_hour(d: date_cls, h: int) -> bool:
@@ -130,7 +130,7 @@ if not st.session_state["loaded_hours"]:
 # ---------------- Собираем итоговый df и рисуем ----------------
 df_current = _combined_df()
 if df_current.empty:
-    st.error("Не удалось загрузить данные за выбранный час(ы).")
+    st.info("Нет данных за выбранные час(ы). Попробуйте выбрать другой час.")
     st.stop()
 
 num_cols = [c for c in df_current.columns if c not in HIDE_ALWAYS and pd.api.types.is_numeric_dtype(df_current[c])]
