@@ -2,17 +2,23 @@ from __future__ import annotations
 import pandas as pd
 
 def _to_num(s: pd.Series) -> pd.Series:
+    """
+    Жёстко приводим к числам:
+    - убираем неразрывные пробелы и обычные пробелы,
+    - заменяем запятую на точку,
+    - pd.to_numeric(..., errors='coerce') — любые сбои -> NaN (не ломают тип столбца).
+    """
     if pd.api.types.is_numeric_dtype(s):
         return s
     if s.dtype.kind == "O":
         try:
-            return pd.to_numeric(
+            s2 = (
                 s.astype(str)
                  .str.replace("\u00a0", "", regex=False)   # неразрывный пробел
                  .str.replace(" ", "", regex=False)
-                 .str.replace(",", ".", regex=False),
-                errors="ignore",
+                 .str.replace(",", ".", regex=False)
             )
+            return pd.to_numeric(s2, errors="coerce")
         except Exception:
             return s
     return s
@@ -21,7 +27,7 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
     """
     • Индекс времени берём ИСКЛЮЧИТЕЛЬНО из ПЕРВОГО столбца.
     • Колонку 'uptime' (в любом регистре) удаляем.
-    • Остальные столбцы стараемся привести к числам (учитываем запятую).
+    • Остальные столбцы приводим к числам (с запятой и пробелами), сбойные значения -> NaN.
     """
     if df is None or df.empty:
         return df
@@ -37,7 +43,7 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
         infer_datetime_format=True,
         utc=False,
     )
-    # если вдруг авто-парсинг не сработал (редко), пробуем секунды от эпохи
+    # если авто-парсинг не сработал (редко), пробуем секунды от эпохи
     if ts.notna().sum() < len(df) * 0.8:
         try:
             ts2 = pd.to_datetime(df[time_col], unit="s", errors="coerce", utc=False)
@@ -55,7 +61,7 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
     if drop:
         df = df.drop(columns=drop)
 
-    # 3) привести к числам
+    # 3) привести к числам (с безопасным coerce)
     for c in df.columns:
         df[c] = _to_num(df[c])
 
