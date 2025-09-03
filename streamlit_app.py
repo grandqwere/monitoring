@@ -16,14 +16,9 @@ st.title("Сводные графики электроизмерений")
 
 # ------- вспомогательное: кнопка «Обновить» для конкретного графика -------
 def refresh_bar(title: str, name: str) -> int:
-    """
-    Рисует заголовок + кнопку «↻ Обновить» справа.
-    Возвращает текущий refresh-счётчик (int) для включения в key графика.
-    """
     key = f"refresh_{name}"
     if key not in st.session_state:
         st.session_state[key] = 0
-
     left, right = st.columns([0.85, 0.15])
     with left:
         st.subheader(title)
@@ -56,7 +51,6 @@ if not num_cols:
     st.error("Не нашёл числовых колонок для графика.")
     st.stop()
 
-# Тема Streamlit (для шаблона/палитры Plotly)
 theme_base = st.get_option("theme.base") or "light"
 
 # =================== СВОДНЫЙ ГРАФИК ===================
@@ -70,32 +64,39 @@ selected_main = st.multiselect(
     key="main_fields",
 )
 
+# --- Нормирование шкалы (строго «минус одна», при любом порядке кликов) ---
 st.markdown("**Нормирование шкалы** (отдельные шкалы слева для отмеченных трендов):")
-separate_set = set()
-max_allowed = max(0, len(selected_main) - 1)
-checked_count = 0
 
-# почистим старые ключи чекбоксов, которых больше нет
+# очистим устаревшие ключи
 for k in list(st.session_state.keys()):
     if k.startswith("norm_"):
         col = k[5:]
         if col not in selected_main:
             del st.session_state[k]
 
-for c in selected_main:
-    prev_val = bool(st.session_state.get(f"norm_{c}", False))
-    disabled = (checked_count >= max_allowed) and (not prev_val)
-    val = st.checkbox(c, value=prev_val, key=f"norm_{c}", disabled=disabled)
-    if val:
-        separate_set.add(c)
-        checked_count += 1
+allowed = max(0, len(selected_main) - 1)
 
-# гарантия: хотя бы одна серия остаётся на базовой оси
-if len(separate_set) >= len(selected_main) and selected_main:
-    last = selected_main[-1]
-    if last in separate_set:
-        separate_set.remove(last)
-        st.session_state[f"norm_{last}"] = False
+# текущее состояние флагов (до отрисовки)
+flags = {c: bool(st.session_state.get(f"norm_{c}", False)) for c in selected_main}
+
+# отрисовываем чекбоксы: каждый дизейблим, если без него уже набрано allowed
+for c in selected_main:
+    checked_others = sum(flags[x] for x in selected_main if x != c)
+    disable_this = (checked_others >= allowed) and (not flags[c])
+    val = st.checkbox(c, value=flags[c], key=f"norm_{c}", disabled=disable_this)
+    flags[c] = bool(val)
+
+# после отрисовки — ещё раз проверим ограничение
+checked = [c for c, v in flags.items() if v]
+if len(checked) > allowed:
+    # оставим только первые allowed по порядку selected_main
+    to_keep = set([c for c in selected_main if c in checked][:allowed])
+    for c in checked:
+        if c not in to_keep:
+            st.session_state[f"norm_{c}"] = False
+            flags[c] = False
+
+separate_set = {c for c, v in flags.items() if v}
 
 fig_main = main_chart(
     df=df,
@@ -104,12 +105,7 @@ fig_main = main_chart(
     theme_base=theme_base,
     separate_axes=separate_set,
 )
-st.plotly_chart(
-    fig_main,
-    use_container_width=True,
-    config={"responsive": True},
-    key=f"main_{token_main}",
-)
+st.plotly_chart(fig_main, use_container_width=True, config={"responsive": True}, key=f"main_{token_main}")
 
 # =================== ГРУППЫ ===================
 
@@ -132,7 +128,7 @@ fig_urms = group_panel(df, present_urms, height=PLOT_HEIGHT, theme_base=theme_ba
 st.plotly_chart(fig_urms, use_container_width=True, config={"responsive": True}, key=f"grp_urms_{token_ur}")
 
 # 4) Напряжение (линейное) L12 / L23 / L31
-token_ul = refresh_bar("Напряжение (линейное) L12 / L23 / L31", "grp_uline")
+token_ul = refresh_bar("Напряжение (линейное) L12 / Л23 / Л31", "grp_uline")
 present_uline = [c for c in ["U_L1_L2", "U_L2_L3", "U_L3_L1"] if c in df.columns]
 fig_uline = group_panel(df, present_uline, height=PLOT_HEIGHT, theme_base=theme_base)
 st.plotly_chart(fig_uline, use_container_width=True, config={"responsive": True}, key=f"grp_uline_{token_ul}")
