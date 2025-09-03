@@ -187,7 +187,7 @@ if mode_daily:
     show_p95, show_ext = daily_overlays_controls()
 
     # Агрегация 20с
-    agg = aggregate_20s(df_day[num_cols])
+    agg = aggregate_by(df_day[num_cols], rule="1min")
     df_mean, df_p95, df_max, df_min = agg["mean"], agg["p95"], agg["max"], agg["min"]
 
     # Рисуем
