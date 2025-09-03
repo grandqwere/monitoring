@@ -3,7 +3,6 @@ from datetime import date
 import streamlit as st
 
 from core.data_io import available_hours_for_date
-from core.s3_paths import build_key_for
 
 def render_date_hour_picker(cache_buster: int) -> tuple[date | None, str | None]:
     """
@@ -37,7 +36,5 @@ def render_date_hour_picker(cache_buster: int) -> tuple[date | None, str | None]
                 else:
                     cols[i].button(label, key=key, disabled=True)
 
-        # Подсказка с ожидаемым путём (debug/help)
-        st.caption(f"Шаблонный путь для часа 00: {build_key_for(selected_date, 0)}")
 
     return selected_date, chosen_key
