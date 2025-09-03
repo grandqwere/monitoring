@@ -8,24 +8,22 @@ from core import state
 from core.config import HIDE_ALWAYS, DEFAULT_PRESET, PLOT_HEIGHT
 from core.data_io import read_csv_s3
 from core.prepare import normalize
-from core.plotting import main_chart
+from core.plotting import main_chart, daily_main_chart
 from ui.refresh import draw_refresh_all, refresh_bar
 from ui.picker import render_date_hour_picker
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
 from core.s3_paths import build_all_key_for
-
 from core.aggregate import aggregate_by
-from core.plotting import daily_main_chart
 from ui.day import render_day_picker, day_nav_buttons, shift_day
-from ui.summary import daily_overlays_controls
-
 
 st.set_page_config(page_title="Часовые графики электроизмерений", layout="wide")
 state.init_once()
 
 # ---------------- Заголовок и «Обновить всё» ----------------
 ALL_TOKEN = draw_refresh_all()
+
+# ---------------- Тумблер режима ----------------
 mode_daily = st.toggle("Режим: сутки", value=st.session_state.get("mode_daily", False), key="mode_daily")
 
 # --------- состояние отображаемых часов (макс. 2) ----------
@@ -47,7 +45,8 @@ def _load_hour(d: date_cls, h: int) -> pd.DataFrame | None:
         df = normalize(df_raw)
         st.session_state["hour_cache"][k] = df
         return df
-    except Exception:
+    except Exception as e:
+        # Информируем, но не красним интерфейс
         st.info(f"Нет файла за этот час: `{s3_key}`.")
         return None
 
@@ -94,8 +93,8 @@ def _combined_df() -> pd.DataFrame:
 def _has_current() -> bool:
     return ("current_date" in st.session_state) and ("current_hour" in st.session_state)
 
+# ====================== СУТОЧНЫЙ РЕЖИМ ======================
 if mode_daily:
-    # ---------- СУТОЧНЫЙ РЕЖИМ ----------
     st.markdown("### День (S3)")
     day = render_day_picker()
 
@@ -112,10 +111,10 @@ if mode_daily:
         st.info("Выберите дату.")
         st.stop()
 
-    # Собираем 24 часа (без «дозагрузки» в интерфейс — только один день на экране)
+    # Собираем 24 часа (только один день показываем)
     frames = []
     raw_points = 0
-    
+
     # Показ статуса/прогресса
     try:
         with st.status("Готовим данные за день…", expanded=False) as status:
@@ -128,26 +127,26 @@ if mode_daily:
                     raw_points += len(dfh)
                     ok += 1
                 prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
-            status.update(label=f"Загружено часов: {ok}/24. Агрегируем данные раз в минуту…", state="running")
-    
+            status.update(label=f"Загружено часов: {ok}/24. Агрегируем данные раз в 5 минут…", state="running")
+
             if not frames:
                 status.update(label="Нет данных за выбранный день.", state="error")
                 st.info("Нет данных за выбранный день.")
                 st.stop()
-    
+
             df_day = pd.concat(frames).sort_index()
             num_cols = [c for c in df_day.columns if c not in HIDE_ALWAYS and pd.api.types.is_numeric_dtype(df_day[c])]
             if not num_cols:
                 status.update(label="Числовые колонки за день не найдены.", state="error")
                 st.info("Числовые колонки за день не найдены.")
                 st.stop()
-    
-            # Агрегация 1 минута
-            agg = aggregate_by(df_day[num_cols], rule="1min")
-            df_mean, df_p95, df_max, df_min = agg["mean"], agg["p95"], agg["max"], agg["min"]
-    
+
+            # Агрегация 5 минут (используем только mean)
+            agg = aggregate_by(df_day[num_cols], rule="5min")
+            df_mean = agg["mean"]
+
             status.update(
-                label=f"Готово: исходных точек {raw_points} → после агрегации {len(df_mean)} точек на серию (1 мин).",
+                label=f"Готово: исходных точек {raw_points} → после агрегации {len(df_mean)} точек на серию (5 мин).",
                 state="complete"
             )
     except Exception:
@@ -168,40 +167,28 @@ if mode_daily:
             if not num_cols:
                 st.info("Числовые колонки за день не найдены.")
                 st.stop()
-            agg = aggregate_by(df_day[num_cols], rule="1min")
-            df_mean, df_p95, df_max, df_min = agg["mean"], agg["p95"], agg["max"], agg["min"]
-
-    df_day = pd.concat(frames).sort_index()
-
-    num_cols = [c for c in df_day.columns if c not in HIDE_ALWAYS and pd.api.types.is_numeric_dtype(df_day[c])]
-    if not num_cols:
-        st.info("Числовые колонки за день не найдены.")
-        st.stop()
+            agg = aggregate_by(df_day[num_cols], rule="5min")
+            df_mean = agg["mean"]
 
     theme_base = st.get_option("theme.base") or "light"
 
     # Контролы как в часах
-    token_main = refresh_bar("Суточный сводный график", "daily_main")
-    default_main = [c for c in DEFAULT_PRESET if c in num_cols] or num_cols[:3]
-    selected_main, separate_set = render_summary_controls(num_cols, default_main)
-    show_p95, show_ext = daily_overlays_controls()
-
-    # Агрегация 20с
-    agg = aggregate_by(df_day[num_cols], rule="1min")
-    df_mean, df_p95, df_max, df_min = agg["mean"], agg["p95"], agg["max"], agg["min"]
+    token_main = refresh_bar("Суточный сводный график (5 мин, среднее)", "daily_main")
+    default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or [c for c in df_mean.columns[:3]]
+    selected_main, separate_set = render_summary_controls(list(df_mean.columns), default_main)
 
     # Рисуем
     fig_main = daily_main_chart(
-        df_mean=df_mean, df_p95=df_p95, df_max=df_max, df_min=df_min,
+        df_mean=df_mean, df_p95=None, df_max=None, df_min=None,
         series=selected_main, height=PLOT_HEIGHT, theme_base=theme_base,
-        separate_axes=set(separate_set), show_p95=show_p95, show_extrema=show_ext,
+        separate_axes=set(separate_set), show_p95=False, show_extrema=False,
     )
     st.plotly_chart(
         fig_main, use_container_width=True, config={"responsive": True},
         key=f"daily_main_{ALL_TOKEN}_{token_main}",
     )
 
-    # Нижние панели — показываем усреднённые значения (mean) за 20с, те же группы
+    # Нижние панели — mean@5min
     render_power_group(df_mean, PLOT_HEIGHT, theme_base, ALL_TOKEN)
     render_group("Токи фаз L1–L3", "daily_grp_curr", df_mean, ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
     render_group("Напряжение (фазное) L1–L3", "daily_grp_urms", df_mean, ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
@@ -216,9 +203,10 @@ if mode_daily:
     if freq_cols:
         render_group("Частота сети", "daily_grp_freq", df_mean, freq_cols, PLOT_HEIGHT, theme_base, ALL_TOKEN)
 
+    st.caption(f"∑ часов на день: {len(frames)}/24 • Агрегация: 5 мин • Плотность: {len(df_mean)} точек/серию")
     st.stop()
 
-
+# ====================== ЧАСОВОЙ РЕЖИМ ======================
 # ---------------- Пикер даты/часа (с подсветкой реальных данных) ----------------
 st.markdown("### Дата и час (S3)")
 picked_date, picked_hour = render_date_hour_picker()
@@ -228,6 +216,9 @@ if picked_date and picked_hour is not None:
         st.rerun()
 
 # ---------------- Кнопки между пикером и графиками ----------------
+def _has_current():
+    return ("current_date" in st.session_state) and ("current_hour" in st.session_state)
+
 nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
 with nav1:
     show_prev = st.button("Показать предыдущий час", disabled=not _has_current(), use_container_width=True)
@@ -267,13 +258,13 @@ if df_current.empty:
 
 num_cols = [c for c in df_current.columns if c not in HIDE_ALWAYS and pd.api.types.is_numeric_dtype(df_current[c])]
 if not num_cols:
-    st.error("Не нашёл числовых колонок для графика.")
+    st.info("Не нашёл числовых колонок для графика.")
     st.stop()
 
 theme_base = st.get_option("theme.base") or "light"
 
 # Сводный график
-token_main = refresh_bar("Сводный график", "main")
+token_main = refresh_bar("Сводный график (часовой режим)", "main")
 default_main = [c for c in DEFAULT_PRESET if c in num_cols] or num_cols[:3]
 selected_main, separate_set = render_summary_controls(num_cols, default_main)
 
@@ -288,11 +279,8 @@ st.plotly_chart(
     fig_main,
     use_container_width=True,
     config={"responsive": True},
-    key=f"main_{ALL_TOKEN}_{token_main}",  # ← токен в ключе
+    key=f"main_{ALL_TOKEN}_{token_main}",
 )
-
-st.caption(f"∑ часов на день: {len(frames)}/24 • Агрегация: 1 мин • "
-           f"Плотность: {len(df_mean)} точек/серию")
 
 # Группы
 render_power_group(df_current, PLOT_HEIGHT, theme_base, ALL_TOKEN)
