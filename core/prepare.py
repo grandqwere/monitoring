@@ -1,59 +1,54 @@
 from __future__ import annotations
 import pandas as pd
-from core.config import TIME_COL, HIDE_ALWAYS
 
-
-def _coerce_numeric(df: pd.DataFrame, skip: list[str]) -> pd.DataFrame:
-    """Преобразуем «тексты» в числа: запятая как десятичная, убрать мусор/единицы."""
-    for c in df.columns:
-        if c in skip:
-            continue
-        if not pd.api.types.is_numeric_dtype(df[c]):
-            s = (
-                df[c]
-                .astype(str)
-                .str.replace("\u00A0", "", regex=False)  # неразрывные пробелы
-                .str.replace(" ", "", regex=False)
-                .str.replace(",", ".", regex=False)      # запятая -> точка
-                .str.replace(r"[^0-9eE\+\-\.]", "", regex=True)
+def _to_num_series(s: pd.Series) -> pd.Series:
+    if pd.api.types.is_numeric_dtype(s):
+        return s
+    if s.dtype.kind == "O":
+        try:
+            # заменяем запятую на точку и убираем пробелы — частый случай
+            return pd.to_numeric(
+                s.astype(str).str.replace(",", ".", regex=False).str.replace(" ", "", regex=False),
+                errors="ignore",
             )
-            df[c] = pd.to_numeric(s, errors="coerce")
-    return df
+        except Exception:
+            return s
+    return s
 
-
-def normalize(df_raw: pd.DataFrame) -> pd.DataFrame:
-    """Сделать датафрейм готовым к графику:
-    - парсим TIME_COL в datetime, ставим как индекс и сортируем;
-    - удаляем скрытые колонки;
-    - приводим остальные к числам.
+def normalize(df: pd.DataFrame) -> pd.DataFrame:
     """
-    df = df_raw.copy()
-    # Удалим скрытые колонки, если есть
-    cols_to_drop = [c for c in df.columns if c in HIDE_ALWAYS]
-    if cols_to_drop:
-        df = df.drop(columns=cols_to_drop)
+    • Время берём из ПЕРВОГО столбца файла и делаем DatetimeIndex.
+    • Колонку uptime удаляем, если встретится.
+    • Остальные столбцы пробуем привести к числам.
+    """
+    if df is None or df.empty:
+        return df
 
-    # Время -> datetime index
-    if TIME_COL not in df.columns:
-        # эвристика: если первая колонка похожа на время
-        first = df.columns[0]
-        t = pd.to_datetime(df[first], errors="coerce", dayfirst=True)
-        if t.notna().sum() == 0:
-            raise ValueError("Не найден столбец времени и не удалось распознать первую колонку как время")
-        time_col = first
-    else:
-        time_col = TIME_COL
-        t = pd.to_datetime(df[time_col], errors="coerce", dayfirst=True)
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
 
-    df = df.loc[t.notna()].copy()
-    df.index = t[t.notna()]
+    # 1) индекс времени: ПЕРВЫЙ столбец
+    time_col = df.columns[0]
+    ts = pd.to_datetime(df[time_col], errors="coerce", infer_datetime_format=True, utc=False)
+    if ts.notna().sum() < len(df) * 0.8:
+        # ещё раз пробуем — вдруг числа в виде секунд/мс от эпохи
+        try:
+            ts2 = pd.to_datetime(df[time_col], unit="s", errors="coerce", utc=False)
+            if ts2.notna().sum() >= len(df) * 0.8:
+                ts = ts2
+        except Exception:
+            pass
+    df = df.drop(columns=[time_col])
+    df.index = ts
     df = df.sort_index()
 
-    # Преобразуем не-временные в числовые
-    df = _coerce_numeric(df, skip=[time_col])
+    # 2) убрать uptime (если есть)
+    to_drop = [c for c in df.columns if c.lower() == "uptime"]
+    if to_drop:
+        df = df.drop(columns=to_drop)
+
+    # 3) привести числовые
+    for c in df.columns:
+        df[c] = _to_num_series(df[c])
+
     return df
-
-
-def choose_existing(df: pd.DataFrame, cols):
-    return [c for c in cols if c in df.columns]
-
