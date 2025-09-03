@@ -4,12 +4,14 @@ import streamlit as st
 def draw_refresh_all() -> int:
     if "refresh_all" not in st.session_state:
         st.session_state["refresh_all"] = 0
+
     left, right = st.columns([0.75, 0.25])
     with left:
-        st.title("Сводные графики электроизмерений")
+        st.title("Часовые графики электроизмерений")  # ← новое имя
     with right:
         if st.button("↻ Обновить все графики", key="btn_all"):
             st.session_state["refresh_all"] += 1
+            st.rerun()  # мгновенная перерисовка
     return st.session_state["refresh_all"]
 
 def refresh_bar(title: str, name: str) -> int:
