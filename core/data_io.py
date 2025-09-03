@@ -75,3 +75,16 @@ def read_csv_s3(key: str) -> pd.DataFrame:
     return _read_csv_bytes(data)
 
 # --- (остальной код S3: head/available_hours... можно оставить без изменений, если используется) ---
+
+# --- Заглушки для старого календаря (безопасно удалить, если не нужны) ---
+def s3_build_index() -> pd.DataFrame:
+    return pd.DataFrame(columns=["dt", "key"])
+
+def build_availability(index_df: pd.DataFrame):
+    """
+    Возвращает (days_set, hours_map, key_map):
+      days_set: set[date]
+      hours_map: dict[date, set[int]]
+      key_map: dict[(date, hour), s3_key]
+    """
+    return set(), {}, {}
