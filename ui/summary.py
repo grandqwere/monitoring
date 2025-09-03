@@ -46,3 +46,12 @@ def render_summary_controls(num_cols: List[str], default_main: List[str]) -> tup
 
     separate_set = {c for c, v in flags.items() if v}
     return selected_main, separate_set
+
+def daily_overlays_controls() -> tuple[bool, bool]:
+    c1, c2 = st.columns(2)
+    with c1:
+        show_p95 = st.checkbox("Показывать оболочку p95", True, key="day_show_p95")
+    with c2:
+        show_ext = st.checkbox("Показывать маркеры экстремумов", True, key="day_show_ext")
+    return show_p95, show_ext
+
