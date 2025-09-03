@@ -1,7 +1,6 @@
 from __future__ import annotations
-from typing import List, Set
+from typing import List
 import streamlit as st
-import pandas as pd
 
 def chunk(lst, n):
     for i in range(0, len(lst), n):
@@ -35,7 +34,6 @@ def render_summary_controls(num_cols: List[str], default_main: List[str]) -> tup
                 val = st.checkbox(c, value=flags[c], key=f"norm_{c}", disabled=disable_this)
                 flags[c] = bool(val)
 
-    # финальная нормализация
     checked = [c for c, v in flags.items() if v]
     if len(checked) > allowed:
         to_keep = set([c for c in selected_main if c in checked][:allowed])
@@ -46,12 +44,3 @@ def render_summary_controls(num_cols: List[str], default_main: List[str]) -> tup
 
     separate_set = {c for c, v in flags.items() if v}
     return selected_main, separate_set
-
-def daily_overlays_controls() -> tuple[bool, bool]:
-    c1, c2 = st.columns(2)
-    with c1:
-        show_p95 = st.checkbox("Показывать оболочку p95", True, key="day_show_p95")
-    with c2:
-        show_ext = st.checkbox("Показывать маркеры экстремумов", True, key="day_show_ext")
-    return show_p95, show_ext
-
