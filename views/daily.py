@@ -112,24 +112,26 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     agg_rule = st.session_state.get(radio_key, new_rule)
 
     # Агрегация по выбранному интервалу (используем только mean)
-    agg = aggregate_by(df_day[num_cols], rule=agg_rule)
+    df_day_num = df_day[[c for c in num_cols]]  # явная копия набора
+    agg = aggregate_by(df_day_num, rule=agg_rule)
     df_mean = agg["mean"]
 
     theme_base = st.get_option("theme.base") or "light"
 
-    # === Ключи графиков зависят от даты и интервала (чтобы не путались); 
-    # === но контролы сводного — ИДЕНТИЧНЫ часовым: key_prefix="hourly__"
+    # === Ключи зависят от даты и интервала (чтобы графики точно пересоздавались) ===
     agg_key = agg_rule  # '20s'|'1min'|'2min'|'5min'
     all_token_daily = f"{ALL_TOKEN}_{day_key}_{agg_key}"
-    key_prefix = "hourly__"  # намеренно тот же префикс, что в часовом режиме
+    key_prefix = f"daily_{day_key}_{agg_key}__"  # свой namespace состояний для сутки+интервал
 
-    # --- Сводный график (контролы как в часовом) ---
+    # --- Сводный график (строгий режим контролов, чтобы не было «инверсии») ---
     token_main = refresh_bar("Суточный сводный график", "daily_main")
     default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
+
     selected_main, separate_set = render_summary_controls(
         list(df_mean.columns),
         default_main,
-        key_prefix=key_prefix
+        key_prefix=key_prefix,
+        strict=True,  # <<< ключевая разница: надёжная логика без disabled + пост-коррекция
     )
 
     fig_main = daily_main_chart(
