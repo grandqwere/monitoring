@@ -13,17 +13,15 @@ from ui.refresh import draw_refresh_all, refresh_bar
 from ui.picker import render_date_hour_picker
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
-from core.s3_paths import build_all_key_for  # формируем путь к файлам All/…
-
+from core.s3_paths import build_all_key_for
 
 st.set_page_config(page_title="Сводные графики электроизмерений", layout="wide")
 state.init_once()
 
-# ---------------- Глобальная панель ----------------
+# ---------------- Заголовок и «Обновить всё» ----------------
 ALL_TOKEN = draw_refresh_all()
 
 # --------- состояние отображаемых часов (макс. 2) ----------
-# loaded_hours: список [(date, hour)] в порядке добавления (последние — самые «свежие»)
 if "loaded_hours" not in st.session_state:
     st.session_state["loaded_hours"] = []          # [(date, hour)]
 if "hour_cache" not in st.session_state:
@@ -33,7 +31,6 @@ def _key_for(d: date_cls, h: int) -> str:
     return f"{d.isoformat()}T{h:02d}"
 
 def _load_hour(d: date_cls, h: int) -> pd.DataFrame | None:
-    """Читает час из S3 и приводит, без лишних кешей. Возвращает df или None."""
     k = _key_for(d, h)
     if k in st.session_state["hour_cache"]:
         return st.session_state["hour_cache"][k]
@@ -48,40 +45,36 @@ def _load_hour(d: date_cls, h: int) -> pd.DataFrame | None:
         return None
 
 def _set_only_hour(d: date_cls, h: int) -> bool:
-    """Режим «Показать ...»: оставляем только этот час (без второго)."""
+    """Показать только этот час: очищаем всё остальное из памяти."""
     df = _load_hour(d, h)
     if df is None:
         return False
     st.session_state["loaded_hours"] = [(d, h)]
-    # чистим кеш от всего лишнего
-    to_keep = {_key_for(d, h)}
-    st.session_state["hour_cache"] = {k: v for k, v in st.session_state["hour_cache"].items() if k in to_keep}
-    # также обновим «текущий выбор» для пикера
+    keep = {_key_for(d, h)}
+    st.session_state["hour_cache"] = {k: v for k, v in st.session_state["hour_cache"].items() if k in keep}
     st.session_state["current_date"] = d
     st.session_state["current_hour"] = h
+    st.session_state["selected_date"] = d  # чтобы подсветка в пикере соответствовала текущему дню
     return True
 
 def _append_hour(d: date_cls, h: int) -> bool:
-    """Режим «Загрузить ...»: добавляем второй час, максимум 2 в памяти (с выбросом самого старого)."""
+    """Добавить час к графику (макс. 2): если уже 2 — выкинуть самый старый."""
     df = _load_hour(d, h)
     if df is None:
         return False
     pair = (d, h)
-    # если уже есть — просто обновим порядок
     lh: list[tuple[date_cls, int]] = st.session_state["loaded_hours"]
     if pair in lh:
         lh.remove(pair)
     lh.append(pair)
-    # ограничение до 2 часов
     while len(lh) > 2:
         old = lh.pop(0)
         st.session_state["hour_cache"].pop(_key_for(*old), None)
-    # текущим считаем последний добавленный
     st.session_state["current_date"], st.session_state["current_hour"] = lh[-1]
+    st.session_state["selected_date"] = st.session_state["current_date"]
     return True
 
 def _combined_df() -> pd.DataFrame:
-    """Объединяет загруженные часы (1 или 2) в один df по времени."""
     frames = []
     for d, h in st.session_state["loaded_hours"]:
         k = _key_for(d, h)
@@ -89,13 +82,20 @@ def _combined_df() -> pd.DataFrame:
             frames.append(st.session_state["hour_cache"][k])
     if not frames:
         return pd.DataFrame()
-    df = pd.concat(frames).sort_index()
-    return df
+    return pd.concat(frames).sort_index()
 
 def _has_current() -> bool:
     return ("current_date" in st.session_state) and ("current_hour" in st.session_state)
 
-# ---------------- Кнопки навигации/загрузки ----------------
+# ---------------- Пикер даты/часа (с подсветкой реальных данных) ----------------
+st.markdown("### Дата и час (S3)")
+picked_date, picked_hour = render_date_hour_picker()
+if picked_date and picked_hour is not None:
+    # Нажатие часа — сразу «Показать» (один час) + мгновенная перерисовка, чтобы подсветка обновилась
+    if _set_only_hour(picked_date, picked_hour):
+        st.rerun()
+
+# ---------------- Кнопки между пикером и графиками ----------------
 nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
 with nav1:
     show_prev = st.button("Показать предыдущий час", disabled=not _has_current(), use_container_width=True)
@@ -106,55 +106,33 @@ with nav3:
 with nav4:
     show_next = st.button("Показать следующий час", disabled=not _has_current(), use_container_width=True)
 
-# ---------------- Пикер даты/часа ----------------
-# Подсветим в таблице часов те, что загружены для выбранной даты
-hl_for_date: set[int] = set()
-sel_date_for_hl = st.session_state.get("selected_date")
-if sel_date_for_hl:
-    for d, h in st.session_state["loaded_hours"]:
-        if d == sel_date_for_hl:
-            hl_for_date.add(h)
-
-st.markdown("### Дата и час (S3)")
-try:
-    picked_date, picked_hour = render_date_hour_picker(loaded_hours_for_selected_date=hl_for_date)
-except TypeError:
-    # старая версия ui/picker.py без аргумента — вызываем без него
-    picked_date, picked_hour = render_date_hour_picker()
-
-# выбор из пикера -> «Показать» этот час
-if picked_date and picked_hour is not None:
-    _set_only_hour(picked_date, picked_hour)
-
-# обработка кнопок «Показать/Загрузить» (только после того, как уже выбран хотя бы один час)
 if _has_current():
     base_d = st.session_state["current_date"]
     base_h = st.session_state["current_hour"]
     if show_prev:
         dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-        _set_only_hour(dt.date(), dt.hour)
+        if _set_only_hour(dt.date(), dt.hour): st.rerun()
     if show_next:
         dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-        _set_only_hour(dt.date(), dt.hour)
+        if _set_only_hour(dt.date(), dt.hour): st.rerun()
     if load_prev:
         dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-        _append_hour(dt.date(), dt.hour)
+        if _append_hour(dt.date(), dt.hour): st.rerun()
     if load_next:
         dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-        _append_hour(dt.date(), dt.hour)
+        if _append_hour(dt.date(), dt.hour): st.rerun()
 
 # если всё ещё нет данных — подскажем
 if not st.session_state["loaded_hours"]:
     st.info("Выберите день и час.")
     st.stop()
 
-# ---------------- Собираем итоговый df для графиков ----------------
+# ---------------- Собираем итоговый df и рисуем ----------------
 df_current = _combined_df()
 if df_current.empty:
     st.error("Не удалось загрузить данные за выбранный час(ы).")
     st.stop()
 
-# ---------------- Дальше — графики ----------------
 num_cols = [c for c in df_current.columns if c not in HIDE_ALWAYS and pd.api.types.is_numeric_dtype(df_current[c])]
 if not num_cols:
     st.error("Не нашёл числовых колонок для графика.")
