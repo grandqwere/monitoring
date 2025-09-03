@@ -85,7 +85,6 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     label_to_rule = {"20 сек": "20s", "1 мин": "1min", "2 мин": "2min", "5 мин": "5min"}
     labels = list(label_to_rule.keys())
 
-    # Храним и метку, и правило в session_state, но ключ для пересоздания компонентов — rule.
     default_label = st.session_state.get("daily_agg_label", "1 мин")
     if default_label not in labels:
         default_label = "1 мин"
@@ -100,7 +99,6 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         key="daily_agg_label",
     )
     agg_rule = label_to_rule[agg_label]
-    st.session_state["daily_agg_rule"] = agg_rule  # сохраняем явное правило
 
     # Агрегация по выбранному интервалу (используем только mean)
     with st.spinner("Агрегируем данные…"):
@@ -109,15 +107,20 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
 
     theme_base = st.get_option("theme.base") or "light"
 
-    # === ВАЖНО: уникальные ключи с учётом дня и интервала, чтобы Streamlit не путал графики ===
+    # === Уникальные ключи + префиксы для виджетов и графиков ===
     day_key = day.strftime("%Y%m%d")
-    agg_key = agg_rule  # уже короткая строка ('20s'/'1min'/'2min'/'5min')
+    agg_key = agg_rule  # '20s'|'1min'|'2min'|'5min'
     all_token_daily = f"{ALL_TOKEN}_{day_key}_{agg_key}"
+    key_prefix = f"daily_{day_key}_{agg_key}__"  # для multiselect/checkbox внутри summary
 
     # --- Сводный график ---
     token_main = refresh_bar("Суточный сводный график", "daily_main")
     default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
-    selected_main, separate_set = render_summary_controls(list(df_mean.columns), default_main)
+    selected_main, separate_set = render_summary_controls(
+        list(df_mean.columns),
+        default_main,
+        key_prefix=key_prefix
+    )
 
     fig_main = daily_main_chart(
         df_mean=df_mean, df_p95=None, df_max=None, df_min=None,
@@ -131,7 +134,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         key=f"daily_main_{all_token_daily}_{token_main}",
     )
 
-    # --- Группы (используют тот же df_mean и те же уникальные ключи) ---
+    # --- Группы (используют тот же df_mean и те же уникальные ключи в хвосте) ---
     render_power_group(df_mean, PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Токи фаз L1–L3", "daily_grp_curr", df_mean,
                  ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
