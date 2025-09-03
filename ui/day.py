@@ -3,7 +3,7 @@ from datetime import date, timedelta
 import streamlit as st
 
 def render_day_picker() -> date | None:
-    """Простой календарь без часов."""
+    """Простой календарь без часов (для суточного режима)."""
     selected = st.session_state.get("selected_day") or date.today()
     with st.expander("Выбрать день", expanded=False):
         selected = st.date_input("Дата", value=selected, format="YYYY-MM-DD", key="date_pick_day")
