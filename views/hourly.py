@@ -61,16 +61,20 @@ def _load_with_status_append(date_obj, hour: int) -> bool:
 
 
 def render_hourly_mode() -> None:
-    # Сначала обрабатываем "заявку" из пикера (час, на который кликнули),
-    # чтобы сетка часов сразу подсветила новый час без дополнительного клика/перерисовки.
-    pend_d = st.session_state.pop("__pending_date", None)
-    pend_h = st.session_state.pop("__pending_hour", None)
-    if pend_d and (pend_h is not None):
-        _load_with_status_set_only(pend_d, int(pend_h))
-
-    # Пикер даты/часа (после возможной загрузки — подсветка будет актуальной)
+    # Заголовок блока выбора
     st.markdown("### Дата и час")
-    picked_date, _ = render_date_hour_picker()
+
+    # Рисуем пикер в placeholder, чтобы можно было ПЕРЕРИСОВАТЬ его сразу после загрузки часа
+    picker_ph = st.empty()
+    with picker_ph.container():
+        picked_date, picked_hour = render_date_hour_picker()
+
+    # Если кликнули по часу — грузим и сразу перерисовываем сетку, чтобы подсветка обновилась в этот же прогон
+    if picked_date and picked_hour is not None:
+        _load_with_status_set_only(picked_date, picked_hour)
+        picker_ph.empty()
+        with picker_ph.container():
+            render_date_hour_picker()
 
     # Навигационные кнопки
     nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
@@ -88,16 +92,28 @@ def render_hourly_mode() -> None:
         base_h = st.session_state["current_hour"]
         if show_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            _load_with_status_set_only(dt.date(), dt.hour)
+            if _load_with_status_set_only(dt.date(), dt.hour):
+                picker_ph.empty()
+                with picker_ph.container():
+                    render_date_hour_picker()
         if show_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            _load_with_status_set_only(dt.date(), dt.hour)
+            if _load_with_status_set_only(dt.date(), dt.hour):
+                picker_ph.empty()
+                with picker_ph.container():
+                    render_date_hour_picker()
         if load_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            _load_with_status_append(dt.date(), dt.hour)
+            if _load_with_status_append(dt.date(), dt.hour):
+                picker_ph.empty()
+                with picker_ph.container():
+                    render_date_hour_picker()
         if load_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            _load_with_status_append(dt.date(), dt.hour)
+            if _load_with_status_append(dt.date(), dt.hour):
+                picker_ph.empty()
+                with picker_ph.container():
+                    render_date_hour_picker()
 
     # Если нет данных — подскажем (кнопку обновления не показываем)
     if not st.session_state["loaded_hours"]:
@@ -154,7 +170,7 @@ def render_hourly_mode() -> None:
     render_power_group(df_current, PLOT_HEIGHT, theme_base, ALL_TOKEN)
     render_group("Токи фаз L1–L3", "grp_curr", df_current,
                  ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Напряжение (фазное) L1–Л3", "grp_urms", df_current,
+    render_group("Напряжение (фазное) L1–L3", "grp_urms", df_current,
                  ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
     render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "grp_uline", df_current,
                  ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
