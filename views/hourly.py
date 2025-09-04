@@ -61,12 +61,16 @@ def _load_with_status_append(date_obj, hour: int) -> bool:
 
 
 def render_hourly_mode() -> None:
-    # Пикер даты/часа
+    # Сначала обрабатываем "заявку" из пикера (час, на который кликнули),
+    # чтобы сетка часов сразу подсветила новый час без дополнительного клика/перерисовки.
+    pend_d = st.session_state.pop("__pending_date", None)
+    pend_h = st.session_state.pop("__pending_hour", None)
+    if pend_d and (pend_h is not None):
+        _load_with_status_set_only(pend_d, int(pend_h))
+
+    # Пикер даты/часа (после возможной загрузки — подсветка будет актуальной)
     st.markdown("### Дата и час")
-    picked_date, picked_hour = render_date_hour_picker()
-    if picked_date and picked_hour is not None:
-        _load_with_status_set_only(picked_date, picked_hour)
-        # Никакого st.rerun() — дальше просто строим графики по текущему состоянию
+    picked_date, _ = render_date_hour_picker()
 
     # Навигационные кнопки
     nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
