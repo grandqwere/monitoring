@@ -3,12 +3,28 @@ from datetime import date, timedelta
 import streamlit as st
 
 def render_day_picker() -> date | None:
-    """Простой календарь без часов (для суточного режима)."""
-    selected = st.session_state.get("selected_day") or date.today()
-    with st.expander("Выбрать день", expanded=False):
-        selected = st.date_input("Дата", value=selected, format="YYYY-MM-DD", key="date_pick_day")
-        st.session_state["selected_day"] = selected
-    return selected
+    """Календарь без авто-загрузки: день выбирается и подтверждается кнопкой."""
+    confirmed = bool(st.session_state.get("selected_day_confirmed", False))
+    current = st.session_state.get("selected_day", None)
+
+    # Внутреннее «черновое» значение (не подтверждённое)
+    with st.expander("Выбрать день", expanded=not confirmed):
+        temp = st.date_input(
+            "Дата",
+            value=(current or date.today()),
+            format="YYYY-MM-DD",
+            key="date_pick_day",
+        )
+        if st.button("Показать день", key="btn_show_day", use_container_width=True):
+            st.session_state["selected_day"] = temp
+            st.session_state["selected_day_confirmed"] = True
+            return temp
+
+    # Возвращаем подтверждённый день (если уже выбран)
+    if confirmed and st.session_state.get("selected_day"):
+        return st.session_state["selected_day"]
+    # Иначе — пока ничего не выбрано
+    return None
 
 def day_nav_buttons(enabled: bool) -> tuple[bool, bool]:
     """Кнопки 'Показать предыдущий/следующий день'."""
