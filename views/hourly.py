@@ -126,7 +126,6 @@ def render_hourly_mode() -> None:
 
     # 4) Если нет данных — подскажем и завершим режим
     if not st.session_state.get("loaded_hours"):
-        st.info("Выберите день и час.")
         st.stop()
 
     # 5) Графики
@@ -136,9 +135,10 @@ def render_hourly_mode() -> None:
         st.stop()
     df_current = _coerce_numeric(df_current)
 
+    # Кнопка «Обновить все графики»
     if "refresh_hourly_all" not in st.session_state:
         st.session_state["refresh_hourly_all"] = 0
-    if st.button("↻ Обновить график", use_container_width=True, key="btn_refresh_all_hourly"):
+    if st.button("↻ Обновить все графики", use_container_width=True, key="btn_refresh_all_hourly"):
         st.session_state["refresh_hourly_all"] += 1
     ALL_TOKEN = st.session_state["refresh_hourly_all"]
 
