@@ -112,7 +112,7 @@ def render_daily_mode() -> None:
     # ——— Кнопка «Обновить график» — показываем ТОЛЬКО когда данные загружены ———
     if "refresh_daily_all" not in st.session_state:
         st.session_state["refresh_daily_all"] = 0
-    if st.button("↻ Обновить график", use_container_width=True, key="btn_refresh_all_daily"):
+    if st.button("↻ Обновить все графики", use_container_width=True, key="btn_refresh_all_daily"):
         st.session_state["refresh_daily_all"] += 1
         st.rerun()
     ALL_TOKEN = st.session_state["refresh_daily_all"]
