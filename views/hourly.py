@@ -27,7 +27,10 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _load_with_status_set_only(date_obj, hour: int) -> bool:
-    """UI-обёртка: загружаем 1 час с прогрессбаром и статусом как в суточных."""
+    """
+    UI-обёртка: загружаем 1 час с прогрессбаром и статусом как в суточных.
+    ВАЖНО: не вызываем st.rerun() — оставляем карточку статуса на странице.
+    """
     with st.status(f"Готовим данные за {date_obj.isoformat()}…", expanded=True) as status:
         prog = st.progress(0, text="Загружаем часы: 0/1")
         ok = set_only_hour(date_obj, hour)
@@ -40,7 +43,10 @@ def _load_with_status_set_only(date_obj, hour: int) -> bool:
 
 
 def _load_with_status_append(date_obj, hour: int) -> bool:
-    """UI-обёртка: дозагружаем 1 час (второй) с тем же статусом."""
+    """
+    UI-обёртка: дозагружаем второй час с тем же статусом.
+    Без st.rerun() — карточка остаётся видимой.
+    """
     with st.status(f"Готовим данные за {date_obj.isoformat()}…", expanded=True) as status:
         prog = st.progress(0, text="Загружаем часы: 0/1")
         ok = append_hour(date_obj, hour)
@@ -57,8 +63,8 @@ def render_hourly_mode() -> None:
     st.markdown("### Дата и час")
     picked_date, picked_hour = render_date_hour_picker()
     if picked_date and picked_hour is not None:
-        if _load_with_status_set_only(picked_date, picked_hour):
-            st.rerun()
+        _load_with_status_set_only(picked_date, picked_hour)
+        # Никакого st.rerun() — дальше просто строим графики по текущему состоянию
 
     # Навигационные кнопки
     nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
@@ -76,22 +82,18 @@ def render_hourly_mode() -> None:
         base_h = st.session_state["current_hour"]
         if show_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            if _load_with_status_set_only(dt.date(), dt.hour):
-                st.rerun()
+            _load_with_status_set_only(dt.date(), dt.hour)
         if show_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            if _load_with_status_set_only(dt.date(), dt.hour):
-                st.rerun()
+            _load_with_status_set_only(dt.date(), dt.hour)
         if load_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            if _load_with_status_append(dt.date(), dt.hour):
-                st.rerun()
+            _load_with_status_append(dt.date(), dt.hour)
         if load_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            if _load_with_status_append(dt.date(), dt.hour):
-                st.rerun()
+            _load_with_status_append(dt.date(), dt.hour)
 
-    # Если нет данных — подскажем и не показываем кнопку
+    # Если нет данных — подскажем (кнопку обновления не показываем)
     if not st.session_state["loaded_hours"]:
         st.info("Выберите день и час.")
         st.stop()
@@ -103,12 +105,12 @@ def render_hourly_mode() -> None:
         st.stop()
     df_current = _coerce_numeric(df_current)
 
-    # Кнопка «Обновить график» — показываем ТОЛЬКО когда есть выбранные данные
+    # Кнопка «Обновить график» — только когда есть данные
     if "refresh_hourly_all" not in st.session_state:
         st.session_state["refresh_hourly_all"] = 0
     if st.button("↻ Обновить график", use_container_width=True, key="btn_refresh_all_hourly"):
         st.session_state["refresh_hourly_all"] += 1
-        st.rerun()
+        # без st.rerun(); инкремент ключа приведёт к перерисовке графика ниже
     ALL_TOKEN = st.session_state["refresh_hourly_all"]
 
     num_cols = [
