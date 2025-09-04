@@ -69,6 +69,7 @@ def render_daily_mode() -> None:
 
     day_key = day.strftime("%Y%m%d")
     daily_cache = _get_daily_cache()
+    loaded_msg_key = f"daily_loaded_msg_{day_key}"
 
     # --- Загрузка 24 часов выбранной даты ОДИН РАЗ ---
     if day_key in daily_cache:
@@ -79,6 +80,9 @@ def render_daily_mode() -> None:
                 status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
             st.warning(f"Отсутствуют данные за {day.isoformat()}.")
             return
+        else:
+            # восстановим/сохраним сообщение о загрузке (для устойчивости при переключении режимов)
+            st.session_state[loaded_msg_key] = f"Данные за {day.isoformat()} загружены."
     else:
         frames: list[pd.DataFrame] = []
         with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
@@ -100,6 +104,7 @@ def render_daily_mode() -> None:
         df_day = pd.concat(frames).sort_index()
         df_day = _coerce_numeric(df_day)
         daily_cache[day_key] = df_day
+        st.session_state[loaded_msg_key] = f"Данные за {day.isoformat()} загружены."
 
     # Доступные числовые колонки
     num_cols = [
@@ -111,111 +116,19 @@ def render_daily_mode() -> None:
     if not num_cols:
         return
 
-    # --- Селектор интервала усреднения ---
-    OPTIONS = [("20 сек", "20s"), ("1 мин", "1min"), ("2 мин", "2min"), ("5 мин", "5min")]
-    rules = [v for _, v in OPTIONS]
-    labels = [l for l, _ in OPTIONS]
+    # ——— Сообщение «Данные за … загружены» (персистентное) ———
+    msg = st.session_state.get(loaded_msg_key)
+    if msg:
+        st.caption(msg)
 
-    radio_key = f"daily_agg_rule_{day_key}"
-    current_rule = st.session_state.get(radio_key, "1min")
-    if current_rule not in rules:
-        current_rule = "1min"
-
-    st.markdown("#### Интервал усреднения")
-    idx = rules.index(current_rule)
-    chosen_label = st.radio(
-        "Интервал усреднения",
-        options=labels,
-        index=idx,
-        horizontal=True,
-        label_visibility="collapsed",
-        key=f"{radio_key}__label",
-    )
-    new_rule = dict(OPTIONS)[chosen_label]
-    if new_rule != current_rule:
-        st.session_state[radio_key] = new_rule
-        st.rerun()
-    agg_rule = st.session_state.get(radio_key, new_rule)
-
-    # Кнопка «Обновить все графики» — показываем ТОЛЬКО когда данные загружены
+    # ——— Кнопка «Обновить график» — показываем ТОЛЬКО когда данные загружены ———
     if "refresh_daily_all" not in st.session_state:
         st.session_state["refresh_daily_all"] = 0
-    if df_day is not None and not df_day.empty:
-        if st.button("↻ Обновить все графики", use_container_width=True, key="btn_refresh_all_daily"):
-            st.session_state["refresh_daily_all"] += 1
-            st.rerun()
+    if st.button("↻ Обновить график", use_container_width=True, key="btn_refresh_all_daily"):
+        st.session_state["refresh_daily_all"] += 1
+        st.rerun()
     ALL_TOKEN = st.session_state["refresh_daily_all"]
 
-    # Агрегация по выбранному интервалу (только mean)
-    df_day_num = df_day[[c for c in num_cols]]
-    agg = aggregate_by(df_day_num, rule=agg_rule)
-    df_mean = agg["mean"]
-
-    theme_base = st.get_option("theme.base") or "light"
-
-    # --- Суточный сводный график ---
-    token_main = refresh_bar("Суточный сводный график", "daily_main")
-    default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
-
-    selected_main, separate_set = render_summary_controls(
-        list(df_mean.columns),
-        default_main,
-        key_prefix="daily__",
-        strict=False,  # мягкий режим как в часовом
-    )
-
-    # Автообновление сводного при смене нормировки
-    norm_token = "__".join(sorted(separate_set)) if separate_set else "none"
-    prev_norm_key = f"__daily_prev_norm_{day_key}"
-    prev_norm = st.session_state.get(prev_norm_key)
-    if prev_norm is None:
-        st.session_state[prev_norm_key] = norm_token
-    elif prev_norm != norm_token:
-        st.session_state[prev_norm_key] = norm_token
-        k = "refresh_daily_main"
-        st.session_state[k] = int(st.session_state.get(k, 0)) + 1
-        st.rerun()
-
-    sel_token = "__".join(selected_main) if selected_main else "none"
-    agg_key = agg_rule
-    chart_key = (
-        f"daily_main_{ALL_TOKEN}_{day_key}_{agg_key}_{sel_token}_{norm_token}_"
-        f"{st.session_state.get('refresh_daily_main', 0)}"
-    )
-
-    fig_main = main_chart(
-        df=df_mean,
-        series=selected_main,
-        height=PLOT_HEIGHT,
-        theme_base=theme_base,
-        separate_axes=set(separate_set),
-    )
-    st.plotly_chart(
-        fig_main,
-        use_container_width=True,
-        config={"responsive": True},
-        key=chart_key,
-    )
-
-    # --- Группы (тот же df_mean) ---
-    all_token_daily = f"{ALL_TOKEN}_{day_key}_{agg_key}"
-    render_power_group(df_mean, PLOT_HEIGHT, theme_base, all_token_daily)
-    render_group("Токи фаз L1–L3", "daily_grp_curr", df_mean,
-                 ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
-    render_group("Напряжение (фазное) L1–L3", "daily_grp_urms", df_mean,
-                 ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
-    render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "daily_grp_uline", df_mean,
-                 ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, all_token_daily)
-    render_group("Коэффициент мощности (PF)", "daily_grp_pf", df_mean,
-                 ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
-
-    freq_cols = [
-        c for c in df_mean.columns
-        if pd.api.types.is_numeric_dtype(df_mean[c]) and (
-            ("freq" in c.lower()) or ("frequency" in c.lower())
-            or ("hz" in c.lower()) or (c.lower() == "f")
-        )
-    ]
-    if freq_cols:
-        render_group("Частота сети", "daily_grp_freq", df_mean, freq_cols,
-                     PLOT_HEIGHT, theme_base, all_token_daily)
+    # --- Селектор интервала усреднения ---
+    OPTIONS = [("20 сек", "20s"), ("1 мин", "1min"), ("2 мин", "2min"), ("5 мин", "5min")]
+    rules = [v]()
