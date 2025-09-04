@@ -43,22 +43,6 @@ def _get_daily_cache() -> dict[str, pd.DataFrame]:
     return st.session_state.setdefault("__daily_cache", {})
 
 
-def _progress_bar_html(pct: int, color: str) -> str:
-    # color: 'blue' | 'green' | 'red'
-    palette = {
-        "blue":  "#1f77b4",
-        "green": "#21c354",
-        "red":   "#ff4b4b",
-    }
-    c = palette.get(color, "#1f77b4")
-    pct = max(0, min(100, int(pct)))
-    return f"""
-    <div style="width:100%;background:#e9ecef;border-radius:10px;overflow:hidden;height:18px;">
-      <div style="height:100%;width:{pct}%;background:{c};transition:width 150ms;"></div>
-    </div>
-    """
-
-
 def render_daily_mode(ALL_TOKEN: int) -> None:
     st.markdown("### День")
     day = render_day_picker()
@@ -78,47 +62,41 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         st.info("Выберите дату.")
         st.stop()
 
-    # Жёстко фиксируем смену дня (чтобы не «залипала» старая дата)
+    # Жёстко фиксируем смену дня
     _reset_on_day_change(day)
 
     day_key = day.strftime("%Y%m%d")
     daily_cache = _get_daily_cache()
 
-    # --- Загрузка 24 часов выбранной даты ОДИН РАЗ (только прогрессбар) ---
+    # --- Загрузка 24 часов выбранной даты ОДИН РАЗ ---
     if day_key in daily_cache:
         df_day = daily_cache[day_key]
         if df_day is None or df_day.empty:
-            # День ранее оказался пустым — не перезагружать автоматически
-            bar = st.empty()
-            bar.markdown(_progress_bar_html(100, "red"), unsafe_allow_html=True)
-            st.error(f"Отсутствуют данные за {day.isoformat()}.")
+            # Ничего не подгружаем повторно, просто сообщаем
+            with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
+                st.progress(100, text="Загружаем часы: 24/24")
+                status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
             st.stop()
     else:
         frames: list[pd.DataFrame] = []
-        bar = st.empty()
-        text_ph = st.empty()
+        # РОВНО как раньше: стандартный st.status + st.progress; цвет меняется состоянием
+        with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
+            prog = st.progress(0, text="Загружаем часы: 0/24")
+            for i, h in enumerate(range(24), start=1):
+                dfh = load_hour(day, h, silent=True)  # отсутствие файла не шумит
+                if dfh is not None and not dfh.empty:
+                    frames.append(dfh)
+                prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
 
-        # В процессе — синий
-        for i, h in enumerate(range(24), start=1):
-            dfh = load_hour(day, h, silent=True)  # отсутствие файла не шумит
-            if dfh is not None and not dfh.empty:
-                frames.append(dfh)
-            pct = int(i / 24 * 100)
-            bar.markdown(_progress_bar_html(pct, "blue"), unsafe_allow_html=True)
-            text_ph.text(f"Загружаем часы: {i}/24")
+            if not frames:
+                # Красный цвет через state="error"
+                daily_cache[day_key] = pd.DataFrame()  # кэшируем «пусто», чтобы не перезагружать
+                st.session_state["selected_day_confirmed"] = False
+                status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
+                st.stop()
 
-        if not frames:
-            # Финал — красный
-            bar.markdown(_progress_bar_html(100, "red"), unsafe_allow_html=True)
-            text_ph.empty()
-            st.session_state["selected_day_confirmed"] = False
-            daily_cache[day_key] = pd.DataFrame()  # кэшируем «пусто»
-            st.error(f"Отсутствуют данные за {day.isoformat()}.")
-            st.stop()
-
-        # Финал — зелёный
-        bar.markdown(_progress_bar_html(100, "green"), unsafe_allow_html=True)
-        text_ph.empty()
+            # Зелёный цвет через state="complete"
+            status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
 
         df_day = pd.concat(frames).sort_index()
         df_day = _coerce_numeric(df_day)
@@ -152,7 +130,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         index=idx,
         horizontal=True,
         label_visibility="collapsed",
-        key=f"{radio_key}__label",  # уникальный ключ радиокнопок для даты
+        key=f"{radio_key}__label",
     )
     new_rule = dict(OPTIONS)[chosen_label]
     if new_rule != current_rule:
@@ -171,14 +149,15 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     token_main = refresh_bar("Суточный сводный график", "daily_main")
     default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
 
+    # ВАЖНО: мягкий режим (как в часовом) — с disabled, можно выбрать не более N-1 нормированных осей
     selected_main, separate_set = render_summary_controls(
         list(df_mean.columns),
         default_main,
-        key_prefix="daily__",
-        strict=True,  # строгий режим — без «инверсии» галочек
+        key_prefix="daily__",   # отдельный namespace
+        strict=False,           # мягкий режим = поведение как в часовом
     )
 
-    # Если изменили только нормировку осей — «как будто нажали Обновить»
+    # Если изменили нормировку осей — «как будто нажали Обновить»
     norm_token = "__".join(sorted(separate_set)) if separate_set else "none"
     prev_norm_key = f"__daily_prev_norm_{day_key}"
     prev_norm = st.session_state.get(prev_norm_key)
@@ -186,7 +165,6 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         st.session_state[prev_norm_key] = norm_token
     elif prev_norm != norm_token:
         st.session_state[prev_norm_key] = norm_token
-        # инкрементим счётчик панели и перерисовываем как при клике «↻ Обновить»
         k = "refresh_daily_main"
         st.session_state[k] = int(st.session_state.get(k, 0)) + 1
         st.rerun()
@@ -194,8 +172,10 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     # Ключ графика учитывает «refresh_daily_main»
     sel_token = "__".join(selected_main) if selected_main else "none"
     agg_key = agg_rule
-    day_token = day_key
-    chart_key = f"daily_main_{ALL_TOKEN}_{day_token}_{agg_key}_{sel_token}_{norm_token}_{st.session_state.get('refresh_daily_main',0)}"
+    chart_key = (
+        f"daily_main_{ALL_TOKEN}_{day_key}_{agg_key}_{sel_token}_{norm_token}_"
+        f"{st.session_state.get('refresh_daily_main', 0)}"
+    )
 
     fig_main = main_chart(
         df=df_mean,
