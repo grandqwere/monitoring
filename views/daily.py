@@ -43,26 +43,10 @@ def _get_daily_cache() -> dict[str, pd.DataFrame]:
     return st.session_state.setdefault("__daily_cache", {})
 
 
-def _set_progress_color(mode: str) -> None:
-    """
-    Меняем цвет стандартного st.progress через CSS, не меняя дизайн.
-    mode: 'default' (синий), 'success' (зелёный), 'error' (красный)
-    """
-    colors = {
-        "default": "#1f77b4",  # синий
-        "success": "#21c354",  # зелёный
-        "error":   "#ff4b4b",  # красный
-    }
-    col = colors.get(mode, colors["default"])
+def _colored_note(msg: str, color_hex: str) -> None:
+    """Цветная подпись под статусом, не меняя дизайн прогрессбара."""
     st.markdown(
-        f"""
-        <style>
-        /* Streamlit progressbar перекрашиваем глобально на текущий прогон */
-        div[data-testid="stProgressBar"] div[role="progressbar"] {{
-            background: {col} !important;
-        }}
-        </style>
-        """,
+        f"<div style='margin-top:4px;color:{color_hex};font-weight:600'>{msg}</div>",
         unsafe_allow_html=True,
     )
 
@@ -84,9 +68,9 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
 
     if not day:
         st.info("Выберите дату.")
-        st.stop()
+        return  # не загружаем ничего, пока день не подтверждён
 
-    # Жёстко фиксируем смену дня
+    # Жёстко фиксируем смену дня (чтобы не «залипала» старая дата)
     _reset_on_day_change(day)
 
     day_key = day.strftime("%Y%m%d")
@@ -96,15 +80,14 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     if day_key in daily_cache:
         df_day = daily_cache[day_key]
         if df_day is None or df_day.empty:
-            # День уже известен как пустой — показываем статус с красным цветом и не перезагружаем
-            _set_progress_color("error")
+            # Пустой день уже известен — показываем статус и цветную подпись, НЕ блокируя навигацию
             with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
                 st.progress(100, text="Загружаем часы: 24/24")
                 status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
-            st.stop()
+            _colored_note(f"Отсутствуют данные за {day.isoformat()}.", "#ff4b4b")
+            return
     else:
         frames: list[pd.DataFrame] = []
-        _set_progress_color("default")  # в процессе — синий
         with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы: 0/24")
             for i, h in enumerate(range(24), start=1):
@@ -114,15 +97,13 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
                 prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
 
             if not frames:
-                # Красный результат, не сбиваем подтверждение дня — навигация останется доступной
-                _set_progress_color("error")
                 daily_cache[day_key] = pd.DataFrame()  # кэшируем «пусто», чтобы не перезагружать
                 status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
-                st.stop()
+                _colored_note(f"Отсутствуют данные за {day.isoformat()}.", "#ff4b4b")
+                return  # не блокируем навигацию
 
-            # Зелёный результат
-            _set_progress_color("success")
             status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
+        _colored_note(f"Данные за {day.isoformat()} загружены.", "#21c354")
 
         df_day = pd.concat(frames).sort_index()
         df_day = _coerce_numeric(df_day)
@@ -136,7 +117,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         and df_day[c].notna().any()
     ]
     if not num_cols:
-        st.stop()
+        return
 
     # --- Селектор интервала усреднения (без повторной загрузки часов) ---
     OPTIONS = [("20 сек", "20s"), ("1 мин", "1min"), ("2 мин", "2min"), ("5 мин", "5min")]
@@ -156,7 +137,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         index=idx,
         horizontal=True,
         label_visibility="collapsed",
-        key=f"{radio_key}__label",
+        key=f"{radio_key}__label",  # уникальный ключ радиокнопок для даты
     )
     new_rule = dict(OPTIONS)[chosen_label]
     if new_rule != current_rule:
@@ -222,7 +203,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     render_power_group(df_mean, PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Токи фаз L1–L3", "daily_grp_curr", df_mean,
                  ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
-    render_group("Напряжение (фазное) L1–L3", "daily_grp_urms", df_mean,
+    render_group("Напряжение (фазное) L1–Л3", "daily_grp_urms", df_mean,
                  ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "daily_grp_uline", df_mean,
                  ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, all_token_daily)
@@ -240,5 +221,3 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     if freq_cols:
         render_group("Частота сети", "daily_grp_freq", df_mean, freq_cols,
                      PLOT_HEIGHT, theme_base, all_token_daily)
-
-    st.stop()
