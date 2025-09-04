@@ -69,7 +69,6 @@ def render_daily_mode() -> None:
 
     day_key = day.strftime("%Y%m%d")
     daily_cache = _get_daily_cache()
-    loaded_msg_key = f"daily_loaded_msg_{day_key}"
 
     # --- Загрузка 24 часов выбранной даты ОДИН РАЗ ---
     if day_key in daily_cache:
@@ -80,15 +79,12 @@ def render_daily_mode() -> None:
                 status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
             st.warning(f"Отсутствуют данные за {day.isoformat()}.")
             return
-        else:
-            # восстановим/сохраним сообщение о загрузке (для устойчивости при переключении режимов)
-            st.session_state[loaded_msg_key] = f"Данные за {day.isoformat()} загружены."
     else:
         frames: list[pd.DataFrame] = []
         with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы: 0/24")
             for i, h in enumerate(range(24), start=1):
-                dfh = load_hour(day, h, silent=True)
+                dfh = load_hour(day, h, silent=True)  # отсутствие файла не шумит
                 if dfh is not None and not dfh.empty:
                     frames.append(dfh)
                 prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
@@ -104,7 +100,6 @@ def render_daily_mode() -> None:
         df_day = pd.concat(frames).sort_index()
         df_day = _coerce_numeric(df_day)
         daily_cache[day_key] = df_day
-        st.session_state[loaded_msg_key] = f"Данные за {day.isoformat()} загружены."
 
     # Доступные числовые колонки
     num_cols = [
@@ -115,11 +110,6 @@ def render_daily_mode() -> None:
     ]
     if not num_cols:
         return
-
-    # ——— Сообщение «Данные за … загружены» (персистентное) ———
-    msg = st.session_state.get(loaded_msg_key)
-    if msg:
-        st.caption(msg)
 
     # ——— Кнопка «Обновить график» — показываем ТОЛЬКО когда данные загружены ———
     if "refresh_daily_all" not in st.session_state:
