@@ -43,14 +43,6 @@ def _get_daily_cache() -> dict[str, pd.DataFrame]:
     return st.session_state.setdefault("__daily_cache", {})
 
 
-def _colored_note(msg: str, color_hex: str) -> None:
-    """Цветная подпись под статусом, не меняя дизайн прогрессбара."""
-    st.markdown(
-        f"<div style='margin-top:4px;color:{color_hex};font-weight:600'>{msg}</div>",
-        unsafe_allow_html=True,
-    )
-
-
 def render_daily_mode(ALL_TOKEN: int) -> None:
     st.markdown("### День")
     day = render_day_picker()
@@ -80,11 +72,11 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     if day_key in daily_cache:
         df_day = daily_cache[day_key]
         if df_day is None or df_day.empty:
-            # Пустой день уже известен — показываем статус и цветную подпись, НЕ блокируя навигацию
+            # Пустой день уже известен — показываем статус и жёлтую плашку, НЕ блокируя навигацию
             with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
                 st.progress(100, text="Загружаем часы: 24/24")
                 status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
-            _colored_note(f"Отсутствуют данные за {day.isoformat()}.", "#ff4b4b")
+            st.warning(f"Отсутствуют данные за {day.isoformat()}.")
             return
     else:
         frames: list[pd.DataFrame] = []
@@ -99,11 +91,10 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
             if not frames:
                 daily_cache[day_key] = pd.DataFrame()  # кэшируем «пусто», чтобы не перезагружать
                 status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
-                _colored_note(f"Отсутствуют данные за {day.isoformat()}.", "#ff4b4b")
+                st.warning(f"Отсутствуют данные за {day.isoformat()}.")
                 return  # не блокируем навигацию
 
             status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
-        _colored_note(f"Данные за {day.isoformat()} загружены.", "#21c354")
 
         df_day = pd.concat(frames).sort_index()
         df_day = _coerce_numeric(df_day)
@@ -203,7 +194,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     render_power_group(df_mean, PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Токи фаз L1–L3", "daily_grp_curr", df_mean,
                  ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
-    render_group("Напряжение (фазное) L1–Л3", "daily_grp_urms", df_mean,
+    render_group("Напряжение (фазное) L1–L3", "daily_grp_urms", df_mean,
                  ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "daily_grp_uline", df_mean,
                  ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, all_token_daily)
