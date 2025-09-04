@@ -2,20 +2,32 @@ from __future__ import annotations
 from datetime import date
 import streamlit as st
 
-def _btn(col, label: str, key: str, primary: bool) -> bool:
-    """Кнопка с подсветкой: пробуем type='primary', если не поддерживается — без него."""
+def _btn(col, label: str, key: str, primary: bool, on_click=None, args=()) -> bool:
+    """Кнопка с подсветкой: пробуем type='primary', если не поддерживается — без него.
+       Поддерживаем on_click/args для записи выбранного часа в session_state до перерисовки."""
     try:
-        return col.button(label, key=key, type=("primary" if primary else "secondary"))
+        return col.button(
+            label,
+            key=key,
+            type=("primary" if primary else "secondary"),
+            on_click=on_click,
+            args=args,
+        )
     except TypeError:
-        return col.button(label, key=key)
+        return col.button(label, key=key, on_click=on_click, args=args)
+
+def _mark_pending(date_obj: date, hour: int):
+    """Отметить час к загрузке до следующей отрисовки страницы (без st.rerun здесь)."""
+    st.session_state["__pending_date"] = date_obj
+    st.session_state["__pending_hour"] = hour
 
 def render_date_hour_picker() -> tuple[date | None, int | None]:
     """
     Экспандер с календарём и сеткой часов 00..23.
     Подсветка часов берётся из st.session_state['loaded_hours'] -> реально показанные на графике часы.
-    Возвращает (дата, выбранный_час) — если час кликнули, иначе (дата, None).
+    Возвращает (дата, выбранный_час). Выбранный час ставим «в очередь» через __pending_*,
+    поэтому здесь всегда возвращаем None для часов — обработка в views/hourly.py.
     """
-    chosen_hour: int | None = None
     selected_date = st.session_state.get("selected_date") or date.today()
 
     with st.expander("Выбрать дату и час", expanded=False):
@@ -38,7 +50,14 @@ def render_date_hour_picker() -> tuple[date | None, int | None]:
                 is_loaded = h in loaded_set
                 label = f"{h:02d}:00"
                 key = f"hour_{selected_date.isoformat()}_{h:02d}"
-                if _btn(cols[i], label, key, primary=is_loaded):
-                    chosen_hour = h
+                # При клике ставим "заявку" на загрузку часа; загрузка произойдёт до следующей отрисовки.
+                _btn(
+                    cols[i],
+                    label,
+                    key,
+                    primary=is_loaded,
+                    on_click=_mark_pending,
+                    args=(selected_date, h),
+                )
 
-    return selected_date, chosen_hour
+    return selected_date, None
