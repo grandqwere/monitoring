@@ -26,7 +26,7 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def render_hourly_mode(ALL_TOKEN: int) -> None:
+def render_hourly_mode() -> None:
     # Пикер даты/часа
     st.markdown("### Дата и час")
     picked_date, picked_hour = render_date_hour_picker()
@@ -35,7 +35,7 @@ def render_hourly_mode(ALL_TOKEN: int) -> None:
         if ok:
             st.rerun()
         else:
-            st.warning(f"Нет файла за: {picked_date.isoformat()} {picked_hour:02d}:00")
+            st.warning(f"Отсутствуют данные за: {picked_date.isoformat()} {picked_hour:02d}:00")
 
     # Навигационные кнопки
     nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
@@ -56,25 +56,33 @@ def render_hourly_mode(ALL_TOKEN: int) -> None:
             if set_only_hour(dt.date(), dt.hour):
                 st.rerun()
             else:
-                st.warning(f"Нет файла за: {dt.date().isoformat()} {dt.hour:02d}:00")
+                st.warning(f"Отсутствуют данные за: {dt.date().isoformat()} {dt.hour:02d}:00")
         if show_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
             if set_only_hour(dt.date(), dt.hour):
                 st.rerun()
             else:
-                st.warning(f"Нет файла за: {dt.date().isoformat()} {dt.hour:02d}:00")
+                st.warning(f"Отсутствуют данные за: {dt.date().isoformat()} {dt.hour:02d}:00")
         if load_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
             if append_hour(dt.date(), dt.hour):
                 st.rerun()
             else:
-                st.warning(f"Нет файла за: {dt.date().isoformat()} {dt.hour:02d}:00")
+                st.warning(f"Отсутствуют данные за: {dt.date().isoformat()} {dt.hour:02d}:00")
         if load_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
             if append_hour(dt.date(), dt.hour):
                 st.rerun()
             else:
-                st.warning(f"Нет файла за: {dt.date().isoformat()} {dt.hour:02d}:00")
+                st.warning(f"Отсутствуют данные за: {dt.date().isoformat()} {dt.hour:02d}:00")
+
+    # Кнопка «Обновить все графики» — только для часового режима
+    if "refresh_hourly_all" not in st.session_state:
+        st.session_state["refresh_hourly_all"] = 0
+    if st.button("↻ Обновить все графики", use_container_width=True, key="btn_refresh_all_hourly"):
+        st.session_state["refresh_hourly_all"] += 1
+        st.rerun()
+    ALL_TOKEN = st.session_state["refresh_hourly_all"]
 
     # Если нет данных — подскажем
     if not st.session_state["loaded_hours"]:
