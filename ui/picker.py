@@ -2,39 +2,31 @@ from __future__ import annotations
 from datetime import date
 import streamlit as st
 
-def _btn(col, label: str, key: str, primary: bool, on_click=None, args=()) -> bool:
-    """Кнопка с подсветкой: пробуем type='primary', если не поддерживается — без него.
-       Поддерживаем on_click/args для записи выбранного часа в session_state до перерисовки."""
+def _btn(col, label: str, key: str, primary: bool) -> bool:
+    """
+    Кнопка с подсветкой: пробуем type='primary', если не поддерживается — без него.
+    Возвращаем True при клике (обычное поведение Streamlit).
+    """
     try:
-        return col.button(
-            label,
-            key=key,
-            type=("primary" if primary else "secondary"),
-            on_click=on_click,
-            args=args,
-        )
+        return col.button(label, key=key, type=("primary" if primary else "secondary"))
     except TypeError:
-        return col.button(label, key=key, on_click=on_click, args=args)
-
-def _mark_pending(date_obj: date, hour: int):
-    """Отметить час к загрузке до следующей отрисовки страницы (без st.rerun здесь)."""
-    st.session_state["__pending_date"] = date_obj
-    st.session_state["__pending_hour"] = hour
+        # На старых версиях Streamlit (без параметра type)
+        return col.button(label, key=key)
 
 def render_date_hour_picker() -> tuple[date | None, int | None]:
     """
     Экспандер с календарём и сеткой часов 00..23.
     Подсветка часов берётся из st.session_state['loaded_hours'] -> реально показанные на графике часы.
-    Возвращает (дата, выбранный_час). Выбранный час ставим «в очередь» через __pending_*,
-    поэтому здесь всегда возвращаем None для часов — обработка в views/hourly.py.
+    Возвращает (дата, выбранный_час) — час равен None, если ничего не кликнули.
     """
+    chosen_hour: int | None = None
     selected_date = st.session_state.get("selected_date") or date.today()
 
     with st.expander("Выбрать дату и час", expanded=False):
         selected_date = st.date_input("Дата", value=selected_date, format="YYYY-MM-DD", key="date_pick")
         st.session_state["selected_date"] = selected_date
 
-        # набор часов, которые сейчас реально показаны на графике для выбранной даты
+        # Набор часов, которые сейчас реально показаны на графике для выбранной даты
         loaded_set = set()
         for (d, h) in st.session_state.get("loaded_hours", []):
             if d == selected_date:
@@ -50,14 +42,7 @@ def render_date_hour_picker() -> tuple[date | None, int | None]:
                 is_loaded = h in loaded_set
                 label = f"{h:02d}:00"
                 key = f"hour_{selected_date.isoformat()}_{h:02d}"
-                # При клике ставим "заявку" на загрузку часа; загрузка произойдёт до следующей отрисовки.
-                _btn(
-                    cols[i],
-                    label,
-                    key,
-                    primary=is_loaded,
-                    on_click=_mark_pending,
-                    args=(selected_date, h),
-                )
+                if _btn(cols[i], label, key, primary=is_loaded):
+                    chosen_hour = h
 
-    return selected_date, None
+    return selected_date, chosen_hour
