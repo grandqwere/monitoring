@@ -43,6 +43,30 @@ def _get_daily_cache() -> dict[str, pd.DataFrame]:
     return st.session_state.setdefault("__daily_cache", {})
 
 
+def _set_progress_color(mode: str) -> None:
+    """
+    Меняем цвет стандартного st.progress через CSS, не меняя дизайн.
+    mode: 'default' (синий), 'success' (зелёный), 'error' (красный)
+    """
+    colors = {
+        "default": "#1f77b4",  # синий
+        "success": "#21c354",  # зелёный
+        "error":   "#ff4b4b",  # красный
+    }
+    col = colors.get(mode, colors["default"])
+    st.markdown(
+        f"""
+        <style>
+        /* Streamlit progressbar перекрашиваем глобально на текущий прогон */
+        div[data-testid="stProgressBar"] div[role="progressbar"] {{
+            background: {col} !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_daily_mode(ALL_TOKEN: int) -> None:
     st.markdown("### День")
     day = render_day_picker()
@@ -68,18 +92,19 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     day_key = day.strftime("%Y%m%d")
     daily_cache = _get_daily_cache()
 
-    # --- Загрузка 24 часов выбранной даты ОДИН РАЗ ---
+    # --- Загрузка 24 часов выбранной даты ОДИН РАЗ (дизайн как был: st.status + st.progress) ---
     if day_key in daily_cache:
         df_day = daily_cache[day_key]
         if df_day is None or df_day.empty:
-            # Ничего не подгружаем повторно, просто сообщаем
+            # День уже известен как пустой — показываем статус с красным цветом и не перезагружаем
+            _set_progress_color("error")
             with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
                 st.progress(100, text="Загружаем часы: 24/24")
                 status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
             st.stop()
     else:
         frames: list[pd.DataFrame] = []
-        # РОВНО как раньше: стандартный st.status + st.progress; цвет меняется состоянием
+        _set_progress_color("default")  # в процессе — синий
         with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы: 0/24")
             for i, h in enumerate(range(24), start=1):
@@ -89,13 +114,14 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
                 prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
 
             if not frames:
-                # Красный цвет через state="error"
+                # Красный результат, не сбиваем подтверждение дня — навигация останется доступной
+                _set_progress_color("error")
                 daily_cache[day_key] = pd.DataFrame()  # кэшируем «пусто», чтобы не перезагружать
-                st.session_state["selected_day_confirmed"] = False
                 status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
                 st.stop()
 
-            # Зелёный цвет через state="complete"
+            # Зелёный результат
+            _set_progress_color("success")
             status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
 
         df_day = pd.concat(frames).sort_index()
@@ -149,7 +175,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     token_main = refresh_bar("Суточный сводный график", "daily_main")
     default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
 
-    # ВАЖНО: мягкий режим (как в часовом) — с disabled, можно выбрать не более N-1 нормированных осей
+    # Мягкий режим (как в часовом): можно выбрать не более N-1 нормированных осей
     selected_main, separate_set = render_summary_controls(
         list(df_mean.columns),
         default_main,
