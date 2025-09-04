@@ -15,7 +15,6 @@ from ui.groups import render_group, render_power_group
 
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
-    """Страховка: приводим нечисловые столбцы к числу; сбойные значения -> NaN."""
     df = df.copy()
     for c in df.columns:
         if not pd.api.types.is_numeric_dtype(df[c]):
@@ -76,12 +75,13 @@ def render_hourly_mode() -> None:
             else:
                 st.warning(f"Отсутствуют данные за: {dt.date().isoformat()} {dt.hour:02d}:00")
 
-    # Кнопка «Обновить все графики» — только для часового режима
+    # Кнопка «Обновить все графики» — показываем ТОЛЬКО когда есть выбранный час
     if "refresh_hourly_all" not in st.session_state:
         st.session_state["refresh_hourly_all"] = 0
-    if st.button("↻ Обновить все графики", use_container_width=True, key="btn_refresh_all_hourly"):
-        st.session_state["refresh_hourly_all"] += 1
-        st.rerun()
+    if has_current():
+        if st.button("↻ Обновить все графики", use_container_width=True, key="btn_refresh_all_hourly"):
+            st.session_state["refresh_hourly_all"] += 1
+            st.rerun()
     ALL_TOKEN = st.session_state["refresh_hourly_all"]
 
     # Если нет данных — подскажем
