@@ -31,8 +31,11 @@ def render_hourly_mode(ALL_TOKEN: int) -> None:
     st.markdown("### Дата и час")
     picked_date, picked_hour = render_date_hour_picker()
     if picked_date and picked_hour is not None:
-        if set_only_hour(picked_date, picked_hour):
+        ok = set_only_hour(picked_date, picked_hour)
+        if ok:
             st.rerun()
+        else:
+            st.warning(f"Нет файла за: {picked_date.isoformat()} {picked_hour:02d}:00")
 
     # Навигационные кнопки
     nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
@@ -50,16 +53,28 @@ def render_hourly_mode(ALL_TOKEN: int) -> None:
         base_h = st.session_state["current_hour"]
         if show_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            if set_only_hour(dt.date(), dt.hour): st.rerun()
+            if set_only_hour(dt.date(), dt.hour):
+                st.rerun()
+            else:
+                st.warning(f"Нет файла за: {dt.date().isoformat()} {dt.hour:02d}:00")
         if show_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            if set_only_hour(dt.date(), dt.hour): st.rerun()
+            if set_only_hour(dt.date(), dt.hour):
+                st.rerun()
+            else:
+                st.warning(f"Нет файла за: {dt.date().isoformat()} {dt.hour:02d}:00")
         if load_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            if append_hour(dt.date(), dt.hour): st.rerun()
+            if append_hour(dt.date(), dt.hour):
+                st.rerun()
+            else:
+                st.warning(f"Нет файла за: {dt.date().isoformat()} {dt.hour:02d}:00")
         if load_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            if append_hour(dt.date(), dt.hour): st.rerun()
+            if append_hour(dt.date(), dt.hour):
+                st.rerun()
+            else:
+                st.warning(f"Нет файла за: {dt.date().isoformat()} {dt.hour:02d}:00")
 
     # Если нет данных — подскажем
     if not st.session_state["loaded_hours"]:
