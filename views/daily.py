@@ -61,24 +61,31 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     # --- Загрузка 24 часов выбранной даты (панель сразу раскрыта) ---
     frames: list[pd.DataFrame] = []
     try:
+        missing_hours: list[int] = []
         with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы")
             for i, h in enumerate(range(24), start=1):
-                dfh = load_hour(day, h)  # при отсутствии файла тихо пропускаем
+                dfh = load_hour(day, h, silent=True)  # отсутствие файла не шумит
                 if dfh is not None and not dfh.empty:
                     frames.append(dfh)
+                else:
+                    missing_hours.append(h)
                 prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
 
             if not frames:
                 status.update(label="Нет данных за выбранную дату.", state="error")
                 st.stop()
 
-            # Только финальное сообщение
             status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
+
+        # После завершения — единый список отсутствующих часов в требуемом формате
+        if missing_hours:
+            for h in missing_hours:
+                st.warning(f"Нет файла за: {day.isoformat()} {h:02d}:00")
     except Exception:
         # Фолбэк для старых версий Streamlit без st.status
         for h in range(24):
-            dfh = load_hour(day, h)
+            dfh = load_hour(day, h, silent=True)
             if dfh is not None and not dfh.empty:
                 frames.append(dfh)
         if not frames:
@@ -138,7 +145,8 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     selected_main, separate_set = render_summary_controls(
         list(df_mean.columns),
         default_main,
-        key_prefix="daily__"
+        key_prefix="daily__",
+        strict=True,  # строгий режим — без «инверсии» галочек
     )
 
     # Пересоздаём график при любом изменении выбора
