@@ -3,8 +3,7 @@ from datetime import date
 import streamlit as st
 
 def _btn(col, label: str, key: str, primary: bool, on_click=None, args=()) -> bool:
-    """Кнопка с подсветкой (type='primary' для загруженных часов).
-       Поддерживаем on_click/args, чтобы писать выбор в session_state до следующего прогона."""
+    """Кнопка с подсветкой; поддерживает on_click/args для записи выбора в session_state."""
     try:
         return col.button(
             label,
@@ -21,16 +20,22 @@ def _mark_pending(date_obj: date, hour: int):
     st.session_state["__pending_date"] = date_obj
     st.session_state["__pending_hour"] = hour
 
-def render_date_hour_picker() -> tuple[date | None, int | None]:
+def render_date_hour_picker(*, key_prefix: str = "", expanded: bool = True) -> tuple[date | None, int | None]:
     """
     Экспандер с календарём и сеткой часов 00..23.
     Подсветка часов берётся из st.session_state['loaded_hours'] — реально показанные на графике часы.
-    Возвращает (дата, None), т.к. сам клик отдаём через __pending_* в session_state.
+    Возвращает (дата, None): сам клик отдаём через __pending_*.
+    key_prefix — префикс ключей, чтобы можно было безопасно перерисовывать виджет в тот же прогон.
     """
     selected_date = st.session_state.get("selected_date") or date.today()
 
-    with st.expander("Выбрать дату и час", expanded=False):
-        selected_date = st.date_input("Дата", value=selected_date, format="YYYY-MM-DD", key="date_pick")
+    with st.expander("Выбрать дату и час", expanded=expanded):
+        selected_date = st.date_input(
+            "Дата",
+            value=selected_date,
+            format="YYYY-MM-DD",
+            key=f"{key_prefix}date_pick",
+        )
         st.session_state["selected_date"] = selected_date
 
         # Часы, уже загруженные на график за выбранный день
@@ -45,7 +50,7 @@ def render_date_hour_picker() -> tuple[date | None, int | None]:
                     continue
                 is_loaded = h in loaded_set
                 label = f"{h:02d}:00"
-                key = f"hour_{selected_date.isoformat()}_{h:02d}"
+                key = f"{key_prefix}hour_{selected_date.isoformat()}_{h:02d}"
                 _btn(
                     cols[i],
                     label,
