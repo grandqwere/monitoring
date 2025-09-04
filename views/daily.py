@@ -46,9 +46,11 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     prev_day, next_day = day_nav_buttons(enabled=day is not None)
     if day and prev_day:
         st.session_state["selected_day"] = shift_day(day, -1)
+        st.session_state["selected_day_confirmed"] = True
         st.rerun()
     if day and next_day:
         st.session_state["selected_day"] = shift_day(day, +1)
+        st.session_state["selected_day_confirmed"] = True
         st.rerun()
 
     if not day:
@@ -58,30 +60,22 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     # Жёстко фиксируем смену дня (чтобы не «залипала» старая дата)
     _reset_on_day_change(day)
 
-    # --- Загрузка 24 часов выбранной даты (панель сразу раскрыта) ---
+    # --- Загрузка 24 часов выбранной даты (только прогрессбар, без сообщений по часам) ---
     frames: list[pd.DataFrame] = []
     try:
-        missing_hours: list[int] = []
         with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы")
             for i, h in enumerate(range(24), start=1):
                 dfh = load_hour(day, h, silent=True)  # отсутствие файла не шумит
                 if dfh is not None and not dfh.empty:
                     frames.append(dfh)
-                else:
-                    missing_hours.append(h)
                 prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
 
             if not frames:
-                status.update(label="Нет данных за выбранную дату.", state="error")
+                status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
                 st.stop()
 
             status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
-
-        # После завершения — единый список отсутствующих часов в требуемом формате
-        if missing_hours:
-            for h in missing_hours:
-                st.warning(f"Нет файла за: {day.isoformat()} {h:02d}:00")
     except Exception:
         # Фолбэк для старых версий Streamlit без st.status
         for h in range(24):
@@ -89,6 +83,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
             if dfh is not None and not dfh.empty:
                 frames.append(dfh)
         if not frames:
+            st.error(f"Отсутствуют данные за {day.isoformat()}.")
             st.stop()
 
     # Подготовка набора
@@ -138,7 +133,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
 
     theme_base = st.get_option("theme.base") or "light"
 
-    # --- Сводный график (отдельный namespace для суток) ---
+    # --- Суточный сводный график ---
     token_main = refresh_bar("Суточный сводный график", "daily_main")
     default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
 
