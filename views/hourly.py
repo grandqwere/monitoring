@@ -36,6 +36,7 @@ def _load_with_status_set_only(date_obj, hour: int) -> bool:
         ok = set_only_hour(date_obj, hour)
         prog.progress(100, text="Загружаем часы: 1/1")
         if ok:
+            # Без финального текста «Данные за … загружены.»
             status.update(state="complete")
         else:
             status.update(label=f"Отсутствуют данные за {date_obj.isoformat()}.", state="error")
@@ -52,6 +53,7 @@ def _load_with_status_append(date_obj, hour: int) -> bool:
         ok = append_hour(date_obj, hour)
         prog.progress(100, text="Загружаем часы: 1/1")
         if ok:
+            # Без финального текста «Данные за … загружены.»
             status.update(state="complete")
         else:
             status.update(label=f"Отсутствуют данные за {date_obj.isoformat()}.", state="error")
@@ -59,20 +61,12 @@ def _load_with_status_append(date_obj, hour: int) -> bool:
 
 
 def render_hourly_mode() -> None:
-    # Заголовок блока выбора
+    # Пикер даты/часа
     st.markdown("### Дата и час")
-
-    # Плейсхолдер, чтобы можно было мгновенно перерисовать сетку часов после загрузки
-    picker_ph = st.empty()
-    with picker_ph.container():
-        picked_date, picked_hour = render_date_hour_picker(key_prefix="p0_")
-
-    # Если кликнули по часу — грузим и сразу перерисовываем сетку (с другим префиксом ключей)
+    picked_date, picked_hour = render_date_hour_picker()
     if picked_date and picked_hour is not None:
         _load_with_status_set_only(picked_date, picked_hour)
-        picker_ph.empty()
-        with picker_ph.container():
-            render_date_hour_picker(key_prefix="p1_")
+        # Никакого st.rerun() — дальше просто строим графики по текущему состоянию
 
     # Навигационные кнопки
     nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
@@ -90,28 +84,16 @@ def render_hourly_mode() -> None:
         base_h = st.session_state["current_hour"]
         if show_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            if _load_with_status_set_only(dt.date(), dt.hour):
-                picker_ph.empty()
-                with picker_ph.container():
-                    render_date_hour_picker(key_prefix="p1_")
+            _load_with_status_set_only(dt.date(), dt.hour)
         if show_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            if _load_with_status_set_only(dt.date(), dt.hour):
-                picker_ph.empty()
-                with picker_ph.container():
-                    render_date_hour_picker(key_prefix="p1_")
+            _load_with_status_set_only(dt.date(), dt.hour)
         if load_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            if _load_with_status_append(dt.date(), dt.hour):
-                picker_ph.empty()
-                with picker_ph.container():
-                    render_date_hour_picker(key_prefix="p1_")
+            _load_with_status_append(dt.date(), dt.hour)
         if load_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            if _load_with_status_append(dt.date(), dt.hour):
-                picker_ph.empty()
-                with picker_ph.container():
-                    render_date_hour_picker(key_prefix="p1_")
+            _load_with_status_append(dt.date(), dt.hour)
 
     # Если нет данных — подскажем (кнопку обновления не показываем)
     if not st.session_state["loaded_hours"]:
@@ -130,6 +112,7 @@ def render_hourly_mode() -> None:
         st.session_state["refresh_hourly_all"] = 0
     if st.button("↻ Обновить график", use_container_width=True, key="btn_refresh_all_hourly"):
         st.session_state["refresh_hourly_all"] += 1
+        # без st.rerun(); инкремент ключа приведёт к перерисовке графика ниже
     ALL_TOKEN = st.session_state["refresh_hourly_all"]
 
     num_cols = [
@@ -167,7 +150,7 @@ def render_hourly_mode() -> None:
     render_power_group(df_current, PLOT_HEIGHT, theme_base, ALL_TOKEN)
     render_group("Токи фаз L1–L3", "grp_curr", df_current,
                  ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Напряжение (фазное) L1–L3", "grp_urms", df_current,
+    render_group("Напряжение (фазное) L1–Л3", "grp_urms", df_current,
                  ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
     render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "grp_uline", df_current,
                  ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
