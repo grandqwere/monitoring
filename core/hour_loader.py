@@ -26,8 +26,11 @@ def _key_for(d: date_cls, h: int) -> str:
     return f"{d.isoformat()}T{h:02d}"
 
 
-def load_hour(d: date_cls, h: int) -> pd.DataFrame | None:
-    """Загрузка одного часа с кэшированием. При отсутствии файла — мягкое информсообщение."""
+def load_hour(d: date_cls, h: int, *, silent: bool = True) -> pd.DataFrame | None:
+    """Загрузка одного часа с кэшированием.
+    При отсутствии файла возвращает None. Сообщения интерфейсу выводим на уровне view.
+    silent зарезервирован на случай будущего поведения, по умолчанию ничего не печатаем.
+    """
     k = _key_for(d, h)
     cache = st.session_state["hour_cache"]
     if k in cache:
@@ -40,7 +43,7 @@ def load_hour(d: date_cls, h: int) -> pd.DataFrame | None:
         cache[k] = df
         return df
     except Exception:
-        st.info(f"Нет файла за этот час: `{d.isoformat()} {h:02d}:00`.")
+        # Тихо сигналим отсутствием — без сообщений здесь
         return None
 
 
