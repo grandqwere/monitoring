@@ -20,16 +20,18 @@ def _mark_pending(date_obj: date, hour: int):
     st.session_state["__pending_date"] = date_obj
     st.session_state["__pending_hour"] = hour
 
-def render_date_hour_picker(*, key_prefix: str = "", expanded: bool = True) -> tuple[date | None, int | None]:
+def render_date_hour_picker(*, key_prefix: str = "picker_", expanded: bool = True) -> tuple[date | None, int | None]:
     """
-    Экспандер с календарём и сеткой часов 00..23.
+    Календарь и сетка часов 00..23.
     Подсветка часов берётся из st.session_state['loaded_hours'] — реально показанные на графике часы.
-    Возвращает (дата, None): сам клик отдаём через __pending_*.
-    key_prefix — префикс ключей, чтобы можно было безопасно перерисовывать виджет в тот же прогон.
+    Возвращает (дата, None): сам клик по часу отдаём через __pending_*.
+    key_prefix — префикс ключей, чтобы безопасно перерисовывать виджет в тот же прогон.
     """
     selected_date = st.session_state.get("selected_date") or date.today()
 
+    # Всегда держим панель раскрытой, чтобы выбор дня не закрывал часы
     with st.expander("Выбрать дату и час", expanded=expanded):
+        # date_input возвращает выбранное значение, его же и кладём в session_state
         selected_date = st.date_input(
             "Дата",
             value=selected_date,
