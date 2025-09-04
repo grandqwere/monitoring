@@ -13,17 +13,25 @@ def _btn(col, label: str, key: str, primary: bool) -> bool:
         # На старых версиях Streamlit (без параметра type)
         return col.button(label, key=key)
 
-def render_date_hour_picker() -> tuple[date | None, int | None]:
+def render_date_hour_picker(*, key_prefix: str = "") -> tuple[date | None, int | None]:
     """
     Экспандер с календарём и сеткой часов 00..23.
     Подсветка часов берётся из st.session_state['loaded_hours'] -> реально показанные на графике часы.
     Возвращает (дата, выбранный_час) — час равен None, если ничего не кликнули.
+
+    key_prefix — строка-префикс для ключей элементов, чтобы можно было
+    вызвать пикер несколько раз в одном прогоне без конфликтов ключей.
     """
     chosen_hour: int | None = None
     selected_date = st.session_state.get("selected_date") or date.today()
 
     with st.expander("Выбрать дату и час", expanded=False):
-        selected_date = st.date_input("Дата", value=selected_date, format="YYYY-MM-DD", key="date_pick")
+        selected_date = st.date_input(
+            "Дата",
+            value=selected_date,
+            format="YYYY-MM-DD",
+            key=f"{key_prefix}date_pick",
+        )
         st.session_state["selected_date"] = selected_date
 
         # Набор часов, которые сейчас реально показаны на графике для выбранной даты
@@ -41,7 +49,7 @@ def render_date_hour_picker() -> tuple[date | None, int | None]:
                     continue
                 is_loaded = h in loaded_set
                 label = f"{h:02d}:00"
-                key = f"hour_{selected_date.isoformat()}_{h:02d}"
+                key = f"{key_prefix}hour_{selected_date.isoformat()}_{h:02d}"
                 if _btn(cols[i], label, key, primary=is_loaded):
                     chosen_hour = h
 
