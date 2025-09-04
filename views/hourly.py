@@ -25,6 +25,20 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _loaded_range_caption(df_current: pd.DataFrame) -> str | None:
+    if df_current is None or df_current.empty or not isinstance(df_current.index, pd.DatetimeIndex):
+        return None
+    start = pd.to_datetime(df_current.index.min())
+    end = pd.to_datetime(df_current.index.max())
+    if start.normalize() == end.normalize():
+        return f"Данные за {start.date().isoformat()} с {start:%H:%M} до {end:%H:%M} загружены."
+    else:
+        return (
+            f"Данные с {start.date().isoformat()} {start:%H:%M} "
+            f"до {end.date().isoformat()} {end:%H:%M} загружены."
+        )
+
+
 def render_hourly_mode() -> None:
     # Пикер даты/часа
     st.markdown("### Дата и час")
@@ -75,26 +89,30 @@ def render_hourly_mode() -> None:
             else:
                 st.warning(f"Отсутствуют данные за: {dt.date().isoformat()} {dt.hour:02d}:00")
 
-    # Кнопка «Обновить все графики» — показываем ТОЛЬКО когда есть выбранный час
-    if "refresh_hourly_all" not in st.session_state:
-        st.session_state["refresh_hourly_all"] = 0
-    if has_current():
-        if st.button("↻ Обновить все графики", use_container_width=True, key="btn_refresh_all_hourly"):
-            st.session_state["refresh_hourly_all"] += 1
-            st.rerun()
-    ALL_TOKEN = st.session_state["refresh_hourly_all"]
-
-    # Если нет данных — подскажем
+    # Если нет данных — подскажем и не показываем кнопку
     if not st.session_state["loaded_hours"]:
         st.info("Выберите день и час.")
         st.stop()
 
-    # Сборка и страховка типов
+    # Сборка и страховка типов (нужно для подписи диапазона до кнопки)
     df_current = combined_df()
     if df_current.empty:
         st.info("Нет данных за выбранные час(ы). Попробуйте выбрать другой час.")
         st.stop()
     df_current = _coerce_numeric(df_current)
+
+    # ——— Подпись «Данные за … с … до … загружены» ———
+    cap = _loaded_range_caption(df_current)
+    if cap:
+        st.caption(cap)
+
+    # Кнопка «Обновить график» — показываем ТОЛЬКО когда есть выбранные данные
+    if "refresh_hourly_all" not in st.session_state:
+        st.session_state["refresh_hourly_all"] = 0
+    if st.button("↻ Обновить график", use_container_width=True, key="btn_refresh_all_hourly"):
+        st.session_state["refresh_hourly_all"] += 1
+        st.rerun()
+    ALL_TOKEN = st.session_state["refresh_hourly_all"]
 
     num_cols = [
         c for c in df_current.columns
