@@ -2,29 +2,25 @@ from __future__ import annotations
 from datetime import date, timedelta
 import streamlit as st
 
-def render_day_picker() -> date | None:
-    """Календарь без авто-загрузки: день выбирается и подтверждается кнопкой."""
-    confirmed = bool(st.session_state.get("selected_day_confirmed", False))
-    current = st.session_state.get("selected_day", None)
+def render_day_picker() -> date:
+    """
+    Календарь БЕЗ кнопки подтверждения:
+    при выборе даты сразу сохраняем её в состоянии и строим графики.
+    """
+    if "selected_day" not in st.session_state:
+        st.session_state["selected_day"] = date.today()
 
-    # Внутреннее «черновое» значение (не подтверждённое)
-    with st.expander("Выбрать день", expanded=not confirmed):
-        temp = st.date_input(
+    with st.expander("Выбрать день", expanded=False):
+        picked = st.date_input(
             "Дата",
-            value=(current or date.today()),
+            value=st.session_state["selected_day"],
             format="YYYY-MM-DD",
             key="date_pick_day",
         )
-        if st.button("Показать день", key="btn_show_day", use_container_width=True):
-            st.session_state["selected_day"] = temp
-            st.session_state["selected_day_confirmed"] = True
-            return temp
 
-    # Возвращаем подтверждённый день (если уже выбран)
-    if confirmed and st.session_state.get("selected_day"):
-        return st.session_state["selected_day"]
-    # Иначе — пока ничего не выбрано
-    return None
+    # date_input сам триггерит перерисовку — достаточно сохранить выбор
+    st.session_state["selected_day"] = picked
+    return picked
 
 def day_nav_buttons(enabled: bool) -> tuple[bool, bool]:
     """Кнопки 'Показать предыдущий/следующий день'."""
