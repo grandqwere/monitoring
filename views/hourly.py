@@ -4,9 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from core.config import HIDE_ALWAYS, DEFAULT_PRESET, PLOT_HEIGHT
-from core.hour_loader import (
-    set_only_hour, append_hour, combined_df, has_current
-)
+from core.hour_loader import set_only_hour, append_hour, combined_df, has_current
 from core.plotting import main_chart
 from ui.refresh import refresh_bar
 from ui.picker import render_date_hour_picker
@@ -15,7 +13,6 @@ from ui.groups import render_group, render_power_group
 
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
-    """Страховка: приводим нечисловые столбцы к числу; сбойные значения -> NaN."""
     df = df.copy()
     for c in df.columns:
         if not pd.api.types.is_numeric_dtype(df[c]):
@@ -27,10 +24,7 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _load_with_status_set_only(date_obj, hour: int, *, status_area) -> bool:
-    """
-    Загружаем и показываем ТОЛЬКО этот час (очищая остальной кэш).
-    Статус и предупреждения рисуем СТРОГО под пикером — в status_area.
-    """
+    """Загрузить ТОЛЬКО этот час (очищая кэш). Статус — строго под пикером (status_area)."""
     with status_area.container():
         with st.status(f"Готовим данные за {date_obj.isoformat()} {hour:02d}:00…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы: 0/1")
@@ -39,13 +33,9 @@ def _load_with_status_set_only(date_obj, hour: int, *, status_area) -> bool:
             if ok:
                 status.update(state="complete")
             else:
-                status.update(
-                    label=f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00.",
-                    state="error",
-                )
+                status.update(label=f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00.", state="error")
                 st.warning(f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00.")
     if not ok:
-        # очистим состояние, чтобы старые графики исчезли
         st.session_state["loaded_hours"] = []
         st.session_state["hour_cache"] = {}
         st.session_state["current_date"] = None
@@ -54,10 +44,7 @@ def _load_with_status_set_only(date_obj, hour: int, *, status_area) -> bool:
 
 
 def _load_with_status_append(date_obj, hour: int, *, status_area) -> bool:
-    """
-    Дозагружаем второй час поверх текущего. При ошибке — предупреждение,
-    но существующие графики не трогаем. Всё рисуем в status_area под пикером.
-    """
+    """Дозагрузить второй час. Статус — под пикером (status_area)."""
     with status_area.container():
         with st.status(f"Готовим данные за {date_obj.isoformat()} {hour:02d}:00…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы: 0/1")
@@ -66,36 +53,48 @@ def _load_with_status_append(date_obj, hour: int, *, status_area) -> bool:
             if ok:
                 status.update(state="complete")
             else:
-                status.update(
-                    label=f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00 (дозагрузка).",
-                    state="error",
-                )
+                status.update(label=f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00 (дозагрузка).", state="error")
                 st.warning(f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00 (дозагрузка).")
     return ok
 
 
+def _draw_picker(picker_ph) -> None:
+    """Отрисовать пикер с уникальными ключами за текущий прогон."""
+    rid = st.session_state.setdefault("__picker_redraw", 0)
+    with picker_ph.container():
+        render_date_hour_picker(key_prefix=f"picker_{rid}_", expanded=True)
+
+
+def _redraw_picker(picker_ph) -> None:
+    """Перерисовать пикер в том же месте с новыми ключами (чтобы не было дубликатов)."""
+    st.session_state["__picker_redraw"] = int(st.session_state.get("__picker_redraw", 0)) + 1
+    picker_ph.empty()
+    _draw_picker(picker_ph)
+
+
 def render_hourly_mode() -> None:
-    # === Всегда сверху: заголовок, затем плейсхолдер пикера, затем плейсхолдер статуса ===
+    # Заголовок
     st.markdown("### Дата и час")
 
-    picker_ph = st.container()   # здесь всегда рисуем календарь+часы
-    status_ph = st.container()   # а здесь — ВСЕ статусы/прогресс
+    # Плейсхолдеры: сначала пикер, затем статус — порядок фиксирован
+    picker_ph = st.empty()
+    status_ph = st.empty()
 
-    # 1) Рисуем пикер СНАЧАЛА, чтобы он не исчезал при клике
-    with picker_ph:
-        render_date_hour_picker(key_prefix="picker_", expanded=True)
+    # 1) Сначала рисуем пикер
+    _draw_picker(picker_ph)
 
-    # 2) Обрабатываем клик по часу (из __pending_*) и сразу перерисовываем пикер НА МЕСТЕ
+    # 2) Обрабатываем клик по часу (из __pending_*) и ПЕРЕРИСОВЫВАЕМ пикер в том же месте с новым key_prefix
     pend_d = st.session_state.pop("__pending_date", None)
     pend_h = st.session_state.pop("__pending_hour", None)
     if pend_d is not None and pend_h is not None:
         if _load_with_status_set_only(pend_d, int(pend_h), status_area=status_ph):
-            picker_ph.empty()
-            with picker_ph:
-                render_date_hour_picker(key_prefix="picker_", expanded=True)
+            _redraw_picker(picker_ph)
+        else:
+            # даже если нет данных — обновим пикер (подсветка снимется)
+            _redraw_picker(picker_ph)
 
-    # 3) Навигация по часам
-    nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
+    # 3) Навигация
+    nav1, nav2, nav3, nav4 = st.columns(4)
     with nav1:
         show_prev = st.button("Показать предыдущий час", disabled=not has_current(), use_container_width=True)
     with nav2:
@@ -108,42 +107,35 @@ def render_hourly_mode() -> None:
     if has_current():
         base_d = st.session_state["current_date"]
         base_h = st.session_state["current_hour"]
-
-        def _redraw_picker():
-            picker_ph.empty()
-            with picker_ph:
-                render_date_hour_picker(key_prefix="picker_", expanded=True)
-
         if show_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
             if _load_with_status_set_only(dt.date(), dt.hour, status_area=status_ph):
-                _redraw_picker()
+                _redraw_picker(picker_ph)
         if show_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
             if _load_with_status_set_only(dt.date(), dt.hour, status_area=status_ph):
-                _redraw_picker()
+                _redraw_picker(picker_ph)
         if load_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
             if _load_with_status_append(dt.date(), dt.hour, status_area=status_ph):
-                _redraw_picker()
+                _redraw_picker(picker_ph)
         if load_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
             if _load_with_status_append(dt.date(), dt.hour, status_area=status_ph):
-                _redraw_picker()
+                _redraw_picker(picker_ph)
 
-    # 4) Если нет данных — подскажем и завершим режим (графики не рисуем)
+    # 4) Если нет данных — подскажем и завершим режим
     if not st.session_state.get("loaded_hours"):
         st.info("Выберите день и час.")
         st.stop()
 
-    # 5) Данные и графики
+    # 5) Графики
     df_current = combined_df()
     if df_current.empty:
         st.info("Нет данных за выбранные час(ы). Попробуйте выбрать другой час.")
         st.stop()
     df_current = _coerce_numeric(df_current)
 
-    # Кнопка «Обновить график»
     if "refresh_hourly_all" not in st.session_state:
         st.session_state["refresh_hourly_all"] = 0
     if st.button("↻ Обновить график", use_container_width=True, key="btn_refresh_all_hourly"):
@@ -162,7 +154,6 @@ def render_hourly_mode() -> None:
 
     theme_base = st.get_option("theme.base") or "light"
 
-    # Сводный график
     token_main = refresh_bar("Сводный график", "main")
     default_main = [c for c in DEFAULT_PRESET if c in num_cols] or num_cols[:3]
     selected_main, separate_set = render_summary_controls(num_cols, default_main)
@@ -181,25 +172,12 @@ def render_hourly_mode() -> None:
         key=f"main_{ALL_TOKEN}_{token_main}",
     )
 
-    # Группы
     render_power_group(df_current, PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Токи фаз L1–L3", "grp_curr", df_current,
-                 ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Напряжение (фазное) L1–L3", "grp_urms", df_current,
-                 ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "grp_uline", df_current,
-                 ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Коэффициент мощности (PF)", "grp_pf", df_current,
-                 ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
+    render_group("Токи фаз L1–L3", "grp_curr", df_current, ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
+    render_group("Напряжение (фазное) L1–L3", "grp_urms", df_current, ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
+    render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "grp_uline", df_current, ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
+    render_group("Коэффициент мощности (PF)", "grp_pf", df_current, ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
 
-    # Частота (если есть)
-    freq_cols = [
-        c for c in df_current.columns
-        if pd.api.types.is_numeric_dtype(df_current[c]) and (
-            ("freq" in c.lower()) or ("frequency" in c.lower())
-            or ("hz" in c.lower()) or (c.lower() == "f")
-        )
-    ]
+    freq_cols = [c for c in df_current.columns if pd.api.types.is_numeric_dtype(df_current[c]) and (("freq" in c.lower()) or ("frequency" in c.lower()) or ("hz" in c.lower()) or (c.lower() == "f"))]
     if freq_cols:
-        render_group("Частота сети", "grp_freq", df_current, freq_cols,
-                     PLOT_HEIGHT, theme_base, ALL_TOKEN)
+        render_group("Частота сети", "grp_freq", df_current, freq_cols, PLOT_HEIGHT, theme_base, ALL_TOKEN)
