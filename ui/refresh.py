@@ -7,9 +7,9 @@ def draw_refresh_all() -> int:
 
     left, right = st.columns([0.75, 0.25])
     with left:
-        st.title("Часовые графики электроизмерений")  # ← новое имя
+        st.title("Часовые графики электроизмерений")  # исторический, сейчас не используется
     with right:
-        if st.button("↻ Обновить все графики", key="btn_all"):
+        if st.button("↻ Обновить график", key="btn_all"):
             st.session_state["refresh_all"] += 1
             st.rerun()  # мгновенная перерисовка
     return st.session_state["refresh_all"]
@@ -22,6 +22,6 @@ def refresh_bar(title: str, name: str) -> int:
     with left:
         st.subheader(title)
     with right:
-        if st.button("↻ Обновить", key=f"btn_{name}"):
+        if st.button("↻ Обновить график", key=f"btn_{name}"):
             st.session_state[key] += 1
     return st.session_state[key]
