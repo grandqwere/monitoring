@@ -9,7 +9,6 @@ from core.hour_loader import (
 )
 from core.plotting import main_chart
 from ui.refresh import refresh_bar
-    # nosec B404
 from ui.picker import render_date_hour_picker
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
@@ -32,14 +31,17 @@ def _load_with_status_set_only(date_obj, hour: int) -> bool:
     Загружаем и показываем ТОЛЬКО этот час (очищая остальной кэш).
     Показываем статус с прогрессом и (при ошибке) жёлтое сообщение + очищаем графики.
     """
-    with st.status(f"Готовим данные за {date_obj.isoformat()}…", expanded=True) as status:
+    with st.status(f"Готовим данные за {date_obj.isoformat()} {hour:02d}:00…", expanded=True) as status:
         prog = st.progress(0, text="Загружаем часы: 0/1")
         ok = set_only_hour(date_obj, hour)
         prog.progress(100, text="Загружаем часы: 1/1")
         if ok:
             status.update(state="complete")
         else:
-            status.update(label=f"Отсутствуют данные за {date_obj.isoformat()}.", state="error")
+            status.update(
+                label=f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00.",
+                state="error",
+            )
 
     if not ok:
         # Очистим текущее состояние, чтобы старые графики исчезли
@@ -47,38 +49,55 @@ def _load_with_status_set_only(date_obj, hour: int) -> bool:
         st.session_state["hour_cache"] = {}
         st.session_state["current_date"] = None
         st.session_state["current_hour"] = None
-        st.warning(f"Отсутствуют данные за {date_obj.isoformat()}.")
+        st.warning(f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00.")
 
     return ok
 
 
 def _load_with_status_append(date_obj, hour: int) -> bool:
     """
-    Дозагружаем второй час поверх текущего. При ошибке — показываем предупреждение,
+    Дозагружаем второй час поверх текущего. При ошибке — предупреждение,
     но существующие графики не трогаем.
     """
-    with st.status(f"Готовим данные за {date_obj.isoformat()}…", expanded=True) as status:
+    with st.status(f"Готовим данные за {date_obj.isoformat()} {hour:02d}:00…", expanded=True) as status:
         prog = st.progress(0, text="Загружаем часы: 0/1")
         ok = append_hour(date_obj, hour)
         prog.progress(100, text="Загружаем часы: 1/1")
         if ok:
             status.update(state="complete")
         else:
-            status.update(label=f"Отсутствуют данные за {date_obj.isoformat()} (дозагрузка).", state="error")
-            st.warning(f"Отсутствуют данные за {date_obj.isoformat()} (дозагрузка).")
+            status.update(
+                label=f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00 (дозагрузка).",
+                state="error",
+            )
+            st.warning(f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00 (дозагрузка).")
     return ok
 
 
 def render_hourly_mode() -> None:
-    # === 1) Сначала обрабатываем клик по часу из пикера (on_click -> __pending_*) ===
+    # === 1) Обрабатываем клик по часу из пикера (on_click -> __pending_*) ДО рисования пикера ===
     pend_d = st.session_state.pop("__pending_date", None)
     pend_h = st.session_state.pop("__pending_hour", None)
     if pend_d and (pend_h is not None):
         _load_with_status_set_only(pend_d, int(pend_h))
 
-    # === 2) Пикер даты/часа ===
+    # === 2) Пикер даты/часа — САМЫЙ ВЕРХ после переключателя режимов, не сворачиваем ===
     st.markdown("### Дата и час")
-    render_date_hour_picker()  # клик по часу попадёт в __pending_* и будет обработан при следующем прогоне
+
+    picker_ph = st.empty()
+
+    def draw_picker(prefix: str):
+        with picker_ph.container():
+            # всегда expanded=True, чтобы панель не закрывалась при кликах
+            render_date_hour_picker(key_prefix=prefix, expanded=True)
+
+    # первичный рендер
+    draw_picker("p0_")
+
+    # если только что обработали клик — перерисуем пикер, чтобы сразу подсветить час в этот же прогон
+    if pend_d and (pend_h is not None):
+        picker_ph.empty()
+        draw_picker("p1_")
 
     # === 3) Навигация по часам ===
     nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
@@ -96,16 +115,20 @@ def render_hourly_mode() -> None:
         base_h = st.session_state["current_hour"]
         if show_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            _load_with_status_set_only(dt.date(), dt.hour)
+            if _load_with_status_set_only(dt.date(), dt.hour):
+                picker_ph.empty(); draw_picker("p2_")
         if show_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            _load_with_status_set_only(dt.date(), dt.hour)
+            if _load_with_status_set_only(dt.date(), dt.hour):
+                picker_ph.empty(); draw_picker("p3_")
         if load_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            _load_with_status_append(dt.date(), dt.hour)
+            if _load_with_status_append(dt.date(), dt.hour):
+                picker_ph.empty(); draw_picker("p4_")
         if load_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            _load_with_status_append(dt.date(), dt.hour)
+            if _load_with_status_append(dt.date(), dt.hour):
+                picker_ph.empty(); draw_picker("p5_")
 
     # === 4) Если нет данных — подскажем и завершим режим ===
     if not st.session_state.get("loaded_hours"):
