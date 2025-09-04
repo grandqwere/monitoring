@@ -9,6 +9,7 @@ from core.hour_loader import (
 )
 from core.plotting import main_chart
 from ui.refresh import refresh_bar
+    # nosec B404
 from ui.picker import render_date_hour_picker
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
@@ -28,47 +29,58 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
 
 def _load_with_status_set_only(date_obj, hour: int) -> bool:
     """
-    UI-обёртка: загружаем 1 час с прогрессбаром и статусом как в суточных.
-    ВАЖНО: не вызываем st.rerun() — оставляем карточку статуса на странице.
+    Загружаем и показываем ТОЛЬКО этот час (очищая остальной кэш).
+    Показываем статус с прогрессом и (при ошибке) жёлтое сообщение + очищаем графики.
     """
     with st.status(f"Готовим данные за {date_obj.isoformat()}…", expanded=True) as status:
         prog = st.progress(0, text="Загружаем часы: 0/1")
         ok = set_only_hour(date_obj, hour)
         prog.progress(100, text="Загружаем часы: 1/1")
         if ok:
-            # Без финального текста «Данные за … загружены.»
             status.update(state="complete")
         else:
             status.update(label=f"Отсутствуют данные за {date_obj.isoformat()}.", state="error")
+
+    if not ok:
+        # Очистим текущее состояние, чтобы старые графики исчезли
+        st.session_state["loaded_hours"] = []
+        st.session_state["hour_cache"] = {}
+        st.session_state["current_date"] = None
+        st.session_state["current_hour"] = None
+        st.warning(f"Отсутствуют данные за {date_obj.isoformat()}.")
+
     return ok
 
 
 def _load_with_status_append(date_obj, hour: int) -> bool:
     """
-    UI-обёртка: дозагружаем второй час с тем же статусом.
-    Без st.rerun() — карточка остаётся видимой.
+    Дозагружаем второй час поверх текущего. При ошибке — показываем предупреждение,
+    но существующие графики не трогаем.
     """
     with st.status(f"Готовим данные за {date_obj.isoformat()}…", expanded=True) as status:
         prog = st.progress(0, text="Загружаем часы: 0/1")
         ok = append_hour(date_obj, hour)
         prog.progress(100, text="Загружаем часы: 1/1")
         if ok:
-            # Без финального текста «Данные за … загружены.»
             status.update(state="complete")
         else:
-            status.update(label=f"Отсутствуют данные за {date_obj.isoformat()}.", state="error")
+            status.update(label=f"Отсутствуют данные за {date_obj.isoformat()} (дозагрузка).", state="error")
+            st.warning(f"Отсутствуют данные за {date_obj.isoformat()} (дозагрузка).")
     return ok
 
 
 def render_hourly_mode() -> None:
-    # Пикер даты/часа
-    st.markdown("### Дата и час")
-    picked_date, picked_hour = render_date_hour_picker()
-    if picked_date and picked_hour is not None:
-        _load_with_status_set_only(picked_date, picked_hour)
-        # Никакого st.rerun() — дальше просто строим графики по текущему состоянию
+    # === 1) Сначала обрабатываем клик по часу из пикера (on_click -> __pending_*) ===
+    pend_d = st.session_state.pop("__pending_date", None)
+    pend_h = st.session_state.pop("__pending_hour", None)
+    if pend_d and (pend_h is not None):
+        _load_with_status_set_only(pend_d, int(pend_h))
 
-    # Навигационные кнопки
+    # === 2) Пикер даты/часа ===
+    st.markdown("### Дата и час")
+    render_date_hour_picker()  # клик по часу попадёт в __pending_* и будет обработан при следующем прогоне
+
+    # === 3) Навигация по часам ===
     nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
     with nav1:
         show_prev = st.button("Показать предыдущий час", disabled=not has_current(), use_container_width=True)
@@ -95,24 +107,23 @@ def render_hourly_mode() -> None:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
             _load_with_status_append(dt.date(), dt.hour)
 
-    # Если нет данных — подскажем (кнопку обновления не показываем)
-    if not st.session_state["loaded_hours"]:
+    # === 4) Если нет данных — подскажем и завершим режим ===
+    if not st.session_state.get("loaded_hours"):
         st.info("Выберите день и час.")
         st.stop()
 
-    # Сборка и страховка типов
+    # === 5) Сборка данных и графики ===
     df_current = combined_df()
     if df_current.empty:
         st.info("Нет данных за выбранные час(ы). Попробуйте выбрать другой час.")
         st.stop()
     df_current = _coerce_numeric(df_current)
 
-    # Кнопка «Обновить график» — только когда есть данные
+    # Кнопка «Обновить график»
     if "refresh_hourly_all" not in st.session_state:
         st.session_state["refresh_hourly_all"] = 0
     if st.button("↻ Обновить график", use_container_width=True, key="btn_refresh_all_hourly"):
         st.session_state["refresh_hourly_all"] += 1
-        # без st.rerun(); инкремент ключа приведёт к перерисовке графика ниже
     ALL_TOKEN = st.session_state["refresh_hourly_all"]
 
     num_cols = [
@@ -150,7 +161,7 @@ def render_hourly_mode() -> None:
     render_power_group(df_current, PLOT_HEIGHT, theme_base, ALL_TOKEN)
     render_group("Токи фаз L1–L3", "grp_curr", df_current,
                  ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Напряжение (фазное) L1–Л3", "grp_urms", df_current,
+    render_group("Напряжение (фазное) L1–L3", "grp_urms", df_current,
                  ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
     render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "grp_uline", df_current,
                  ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
