@@ -31,7 +31,6 @@ def render_date_hour_picker(*, key_prefix: str = "picker_", expanded: bool = Tru
 
     # Всегда держим панель раскрытой, чтобы выбор дня не закрывал часы
     with st.expander("Выбрать дату и час", expanded=expanded):
-        # date_input возвращает выбранное значение, его же и кладём в session_state
         selected_date = st.date_input(
             "Дата",
             value=selected_date,
