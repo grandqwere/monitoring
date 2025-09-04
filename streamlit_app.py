@@ -8,7 +8,7 @@ from core.hour_loader import init_hour_state
 
 st.set_page_config(page_title="Мониторинг электрических параметров", layout="wide")
 state.init_once()
-init_hour_state()
+init_hour_state() 
 
 # Заголовок страницы (уменьшенный)
 st.markdown("<h3 style='margin:0'>Мониторинг электрических параметров</h3>", unsafe_allow_html=True)
