@@ -72,6 +72,10 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     if day_key in daily_cache:
         # Уже загружено ранее — не трогаем сервер и не показываем прогресс
         df_day = daily_cache[day_key]
+        if df_day is None or df_day.empty:
+            # День ранее оказался пустым — не перезагружать автоматически
+            st.error(f"Отсутствуют данные за {day.isoformat()}.")
+            st.stop()
     else:
         frames: list[pd.DataFrame] = []
         try:
@@ -84,17 +88,21 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
                     prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
 
                 if not frames:
+                    # Помечаем день как неподтверждённый, чтобы не было автоперезагрузки
+                    st.session_state["selected_day_confirmed"] = False
+                    daily_cache[day_key] = pd.DataFrame()  # кэшируем «пусто», чтобы не перезагружать
                     status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
                     st.stop()
 
                 status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
         except Exception:
-            # Фолбэк для старых версий Streamlit без st.status
             for h in range(24):
                 dfh = load_hour(day, h, silent=True)
                 if dfh is not None and not dfh.empty:
                     frames.append(dfh)
             if not frames:
+                st.session_state["selected_day_confirmed"] = False
+                daily_cache[day_key] = pd.DataFrame()
                 st.error(f"Отсутствуют данные за {day.isoformat()}.")
                 st.stop()
 
