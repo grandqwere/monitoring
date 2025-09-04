@@ -78,23 +78,21 @@ def render_hourly_mode() -> None:
     # === Всегда сверху: заголовок, затем плейсхолдер пикера, затем плейсхолдер статуса ===
     st.markdown("### Дата и час")
 
-    picker_ph = st.empty()   # здесь всегда рисуем календарь+часы
-    status_ph = st.empty()   # а здесь — ВСЕ статусы/прогресс
+    picker_ph = st.container()   # здесь всегда рисуем календарь+часы
+    status_ph = st.container()   # а здесь — ВСЕ статусы/прогресс
 
-    # Утилита одноразового рендера пикера (возможна повторная перерисовка с новым ключом)
-    def draw_picker(key_suffix: str = "p0_"):
-        with picker_ph.container():
-            # expanded=True — панель не сворачивается при кликах
-            render_date_hour_picker(key_prefix=key_suffix, expanded=True)
+    # 1) Рисуем пикер СНАЧАЛА, чтобы он не исчезал при клике
+    with picker_ph:
+        render_date_hour_picker(key_prefix="picker_", expanded=True)
 
-    # 1) Сначала обрабатываем клик по часу (из __pending_*), статус — строго под пикером
+    # 2) Обрабатываем клик по часу (из __pending_*) и сразу перерисовываем пикер НА МЕСТЕ
     pend_d = st.session_state.pop("__pending_date", None)
     pend_h = st.session_state.pop("__pending_hour", None)
     if pend_d is not None and pend_h is not None:
-        _load_with_status_set_only(pend_d, int(pend_h), status_area=status_ph)
-
-    # 2) Рисуем пикер ОДИН раз (после обработки pending), чтобы не было «двойных» date_input
-    draw_picker("p0_")
+        if _load_with_status_set_only(pend_d, int(pend_h), status_area=status_ph):
+            picker_ph.empty()
+            with picker_ph:
+                render_date_hour_picker(key_prefix="picker_", expanded=True)
 
     # 3) Навигация по часам
     nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
@@ -107,39 +105,31 @@ def render_hourly_mode() -> None:
     with nav4:
         show_next = st.button("Показать следующий час", disabled=not has_current(), use_container_width=True)
 
-    # После любых переходов пере-рисовываем пикер в том же месте (тот же placeholder), но с новым префиксом ключей
-    redraw_id = 0
     if has_current():
         base_d = st.session_state["current_date"]
         base_h = st.session_state["current_hour"]
 
+        def _redraw_picker():
+            picker_ph.empty()
+            with picker_ph:
+                render_date_hour_picker(key_prefix="picker_", expanded=True)
+
         if show_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
             if _load_with_status_set_only(dt.date(), dt.hour, status_area=status_ph):
-                redraw_id += 1
-                picker_ph.empty()
-                draw_picker(f"p{redraw_id}_")
-
+                _redraw_picker()
         if show_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
             if _load_with_status_set_only(dt.date(), dt.hour, status_area=status_ph):
-                redraw_id += 1
-                picker_ph.empty()
-                draw_picker(f"p{redraw_id}_")
-
+                _redraw_picker()
         if load_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
             if _load_with_status_append(dt.date(), dt.hour, status_area=status_ph):
-                redraw_id += 1
-                picker_ph.empty()
-                draw_picker(f"p{redraw_id}_")
-
+                _redraw_picker()
         if load_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
             if _load_with_status_append(dt.date(), dt.hour, status_area=status_ph):
-                redraw_id += 1
-                picker_ph.empty()
-                draw_picker(f"p{redraw_id}_")
+                _redraw_picker()
 
     # 4) Если нет данных — подскажем и завершим режим (графики не рисуем)
     if not st.session_state.get("loaded_hours"):
