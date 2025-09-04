@@ -38,6 +38,11 @@ def _reset_on_day_change(day):
         st.rerun()
 
 
+def _get_daily_cache() -> dict[str, pd.DataFrame]:
+    """Кэш суточных данных (объединённый DataFrame по дню)."""
+    return st.session_state.setdefault("__daily_cache", {})
+
+
 def render_daily_mode(ALL_TOKEN: int) -> None:
     st.markdown("### День")
     day = render_day_picker()
@@ -60,36 +65,44 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     # Жёстко фиксируем смену дня (чтобы не «залипала» старая дата)
     _reset_on_day_change(day)
 
-    # --- Загрузка 24 часов выбранной даты (только прогрессбар, без сообщений по часам) ---
-    frames: list[pd.DataFrame] = []
-    try:
-        with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
-            prog = st.progress(0, text="Загружаем часы")
-            for i, h in enumerate(range(24), start=1):
-                dfh = load_hour(day, h, silent=True)  # отсутствие файла не шумит
+    day_key = day.strftime("%Y%m%d")
+    daily_cache = _get_daily_cache()
+
+    # --- Загрузка 24 часов выбранной даты ОДИН РАЗ ---
+    if day_key in daily_cache:
+        # Уже загружено ранее — не трогаем сервер и не показываем прогресс
+        df_day = daily_cache[day_key]
+    else:
+        frames: list[pd.DataFrame] = []
+        try:
+            with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
+                prog = st.progress(0, text="Загружаем часы")
+                for i, h in enumerate(range(24), start=1):
+                    dfh = load_hour(day, h, silent=True)  # отсутствие файла не шумит
+                    if dfh is not None and not dfh.empty:
+                        frames.append(dfh)
+                    prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
+
+                if not frames:
+                    status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
+                    st.stop()
+
+                status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
+        except Exception:
+            # Фолбэк для старых версий Streamlit без st.status
+            for h in range(24):
+                dfh = load_hour(day, h, silent=True)
                 if dfh is not None and not dfh.empty:
                     frames.append(dfh)
-                prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
-
             if not frames:
-                status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
+                st.error(f"Отсутствуют данные за {day.isoformat()}.")
                 st.stop()
 
-            status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
-    except Exception:
-        # Фолбэк для старых версий Streamlit без st.status
-        for h in range(24):
-            dfh = load_hour(day, h, silent=True)
-            if dfh is not None and not dfh.empty:
-                frames.append(dfh)
-        if not frames:
-            st.error(f"Отсутствуют данные за {day.isoformat()}.")
-            st.stop()
+        df_day = pd.concat(frames).sort_index()
+        df_day = _coerce_numeric(df_day)
+        daily_cache[day_key] = df_day  # кэшируем объединённые сутки
 
-    # Подготовка набора
-    df_day = pd.concat(frames).sort_index()
-    df_day = _coerce_numeric(df_day)
-
+    # Доступные числовые колонки
     num_cols = [
         c for c in df_day.columns
         if c not in HIDE_ALWAYS
@@ -99,12 +112,11 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     if not num_cols:
         st.stop()
 
-    # --- Селектор интервала усреднения (после финального сообщения) ---
+    # --- Селектор интервала усреднения (без повторной загрузки часов) ---
     OPTIONS = [("20 сек", "20s"), ("1 мин", "1min"), ("2 мин", "2min"), ("5 мин", "5min")]
     rules = [v for _, v in OPTIONS]
     labels = [l for l, _ in OPTIONS]
 
-    day_key = day.strftime("%Y%m%d")
     radio_key = f"daily_agg_rule_{day_key}"  # состояние на каждый день отдельно
     current_rule = st.session_state.get(radio_key, "1min")
     if current_rule not in rules:
