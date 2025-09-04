@@ -44,9 +44,8 @@ def render_daily_mode() -> None:
     st.markdown("### День")
 
     # Автовыбор текущих суток при первом заходе в режим
-    if not st.session_state.get("selected_day_confirmed", False) and not st.session_state.get("selected_day"):
+    if "selected_day" not in st.session_state:
         st.session_state["selected_day"] = date_cls.today()
-        st.session_state["selected_day_confirmed"] = True
 
     day = render_day_picker()
 
@@ -54,11 +53,9 @@ def render_daily_mode() -> None:
     prev_day, next_day = day_nav_buttons(enabled=day is not None)
     if day and prev_day:
         st.session_state["selected_day"] = shift_day(day, -1)
-        st.session_state["selected_day_confirmed"] = True
         st.rerun()
     if day and next_day:
         st.session_state["selected_day"] = shift_day(day, +1)
-        st.session_state["selected_day_confirmed"] = True
         st.rerun()
 
     if not day:
@@ -95,7 +92,8 @@ def render_daily_mode() -> None:
                 st.warning(f"Отсутствуют данные за {day.isoformat()}.")
                 return
 
-            status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
+            # Без финального текста «Данные за … загружены.»
+            status.update(state="complete")
 
         df_day = pd.concat(frames).sort_index()
         df_day = _coerce_numeric(df_day)
