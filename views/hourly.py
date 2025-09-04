@@ -36,7 +36,6 @@ def _load_with_status_set_only(date_obj, hour: int) -> bool:
         ok = set_only_hour(date_obj, hour)
         prog.progress(100, text="Загружаем часы: 1/1")
         if ok:
-            # Без финального текста «Данные за … загружены.»
             status.update(state="complete")
         else:
             status.update(label=f"Отсутствуют данные за {date_obj.isoformat()}.", state="error")
@@ -53,7 +52,6 @@ def _load_with_status_append(date_obj, hour: int) -> bool:
         ok = append_hour(date_obj, hour)
         prog.progress(100, text="Загружаем часы: 1/1")
         if ok:
-            # Без финального текста «Данные за … загружены.»
             status.update(state="complete")
         else:
             status.update(label=f"Отсутствуют данные за {date_obj.isoformat()}.", state="error")
@@ -64,17 +62,17 @@ def render_hourly_mode() -> None:
     # Заголовок блока выбора
     st.markdown("### Дата и час")
 
-    # Рисуем пикер в placeholder, чтобы можно было ПЕРЕРИСОВАТЬ его сразу после загрузки часа
+    # Плейсхолдер, чтобы можно было мгновенно перерисовать сетку часов после загрузки
     picker_ph = st.empty()
     with picker_ph.container():
-        picked_date, picked_hour = render_date_hour_picker()
+        picked_date, picked_hour = render_date_hour_picker(key_prefix="p0_")
 
-    # Если кликнули по часу — грузим и сразу перерисовываем сетку, чтобы подсветка обновилась в этот же прогон
+    # Если кликнули по часу — грузим и сразу перерисовываем сетку (с другим префиксом ключей)
     if picked_date and picked_hour is not None:
         _load_with_status_set_only(picked_date, picked_hour)
         picker_ph.empty()
         with picker_ph.container():
-            render_date_hour_picker()
+            render_date_hour_picker(key_prefix="p1_")
 
     # Навигационные кнопки
     nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
@@ -95,25 +93,25 @@ def render_hourly_mode() -> None:
             if _load_with_status_set_only(dt.date(), dt.hour):
                 picker_ph.empty()
                 with picker_ph.container():
-                    render_date_hour_picker()
+                    render_date_hour_picker(key_prefix="p1_")
         if show_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
             if _load_with_status_set_only(dt.date(), dt.hour):
                 picker_ph.empty()
                 with picker_ph.container():
-                    render_date_hour_picker()
+                    render_date_hour_picker(key_prefix="p1_")
         if load_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
             if _load_with_status_append(dt.date(), dt.hour):
                 picker_ph.empty()
                 with picker_ph.container():
-                    render_date_hour_picker()
+                    render_date_hour_picker(key_prefix="p1_")
         if load_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
             if _load_with_status_append(dt.date(), dt.hour):
                 picker_ph.empty()
                 with picker_ph.container():
-                    render_date_hour_picker()
+                    render_date_hour_picker(key_prefix="p1_")
 
     # Если нет данных — подскажем (кнопку обновления не показываем)
     if not st.session_state["loaded_hours"]:
@@ -132,7 +130,6 @@ def render_hourly_mode() -> None:
         st.session_state["refresh_hourly_all"] = 0
     if st.button("↻ Обновить график", use_container_width=True, key="btn_refresh_all_hourly"):
         st.session_state["refresh_hourly_all"] += 1
-        # без st.rerun(); инкремент ключа приведёт к перерисовке графика ниже
     ALL_TOKEN = st.session_state["refresh_hourly_all"]
 
     num_cols = [
