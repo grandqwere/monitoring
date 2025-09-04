@@ -1,5 +1,6 @@
 # views/daily.py
 from __future__ import annotations
+from datetime import date as date_cls
 import pandas as pd
 import streamlit as st
 
@@ -14,7 +15,6 @@ from ui.day import render_day_picker, day_nav_buttons, shift_day
 
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
-    """Страховка: приводим нечисловые столбцы к числу; сбойные значения -> NaN."""
     df = df.copy()
     for c in df.columns:
         if not pd.api.types.is_numeric_dtype(df[c]):
@@ -26,12 +26,10 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _reset_on_day_change(day):
-    """На смену дня сбрасываем локальные состояния суточного режима и сразу перерисовываем страницу."""
     day_key = day.strftime("%Y%m%d")
     prev = st.session_state.get("__daily_active_day_key")
     if prev != day_key:
         st.session_state["__daily_active_day_key"] = day_key
-        # убрать всё, что относится к суточным контролам/агрегированию предыдущего дня
         for k in list(st.session_state.keys()):
             if k.startswith("daily__") or k.startswith("daily_agg_rule_"):
                 del st.session_state[k]
@@ -39,12 +37,17 @@ def _reset_on_day_change(day):
 
 
 def _get_daily_cache() -> dict[str, pd.DataFrame]:
-    """Кэш суточных данных (объединённый DataFrame по дню)."""
     return st.session_state.setdefault("__daily_cache", {})
 
 
 def render_daily_mode() -> None:
     st.markdown("### День")
+
+    # Автовыбор текущих суток при первом заходе в режим
+    if not st.session_state.get("selected_day_confirmed", False) and not st.session_state.get("selected_day"):
+        st.session_state["selected_day"] = date_cls.today()
+        st.session_state["selected_day_confirmed"] = True
+
     day = render_day_picker()
 
     # Навигация днями
@@ -60,19 +63,17 @@ def render_daily_mode() -> None:
 
     if not day:
         st.info("Выберите дату.")
-        return  # не загружаем ничего, пока день не подтверждён
+        return
 
-    # Жёстко фиксируем смену дня (чтобы не «залипала» старая дата)
     _reset_on_day_change(day)
 
     day_key = day.strftime("%Y%m%d")
     daily_cache = _get_daily_cache()
 
-    # --- Загрузка 24 часов выбранной даты ОДИН РАЗ (дизайн как был: st.status + st.progress) ---
+    # --- Загрузка 24 часов выбранной даты ОДИН РАЗ ---
     if day_key in daily_cache:
         df_day = daily_cache[day_key]
         if df_day is None or df_day.empty:
-            # Пустой день уже известен — показываем статус и жёлтую плашку, НЕ блокируя навигацию
             with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
                 st.progress(100, text="Загружаем часы: 24/24")
                 status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
@@ -83,22 +84,22 @@ def render_daily_mode() -> None:
         with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы: 0/24")
             for i, h in enumerate(range(24), start=1):
-                dfh = load_hour(day, h, silent=True)  # отсутствие файла не шумит
+                dfh = load_hour(day, h, silent=True)
                 if dfh is not None and not dfh.empty:
                     frames.append(dfh)
                 prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
 
             if not frames:
-                daily_cache[day_key] = pd.DataFrame()  # кэшируем «пусто», чтобы не перезагружать
+                daily_cache[day_key] = pd.DataFrame()
                 status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
                 st.warning(f"Отсутствуют данные за {day.isoformat()}.")
-                return  # не блокируем навигацию
+                return
 
             status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
 
         df_day = pd.concat(frames).sort_index()
         df_day = _coerce_numeric(df_day)
-        daily_cache[day_key] = df_day  # кэшируем объединённые сутки
+        daily_cache[day_key] = df_day
 
     # Доступные числовые колонки
     num_cols = [
@@ -110,12 +111,12 @@ def render_daily_mode() -> None:
     if not num_cols:
         return
 
-    # --- Селектор интервала усреднения (без повторной загрузки часов) ---
+    # --- Селектор интервала усреднения ---
     OPTIONS = [("20 сек", "20s"), ("1 мин", "1min"), ("2 мин", "2min"), ("5 мин", "5min")]
     rules = [v for _, v in OPTIONS]
     labels = [l for l, _ in OPTIONS]
 
-    radio_key = f"daily_agg_rule_{day_key}"  # состояние на каждый день отдельно
+    radio_key = f"daily_agg_rule_{day_key}"
     current_rule = st.session_state.get(radio_key, "1min")
     if current_rule not in rules:
         current_rule = "1min"
@@ -128,7 +129,7 @@ def render_daily_mode() -> None:
         index=idx,
         horizontal=True,
         label_visibility="collapsed",
-        key=f"{radio_key}__label",  # уникальный ключ радиокнопок для даты
+        key=f"{radio_key}__label",
     )
     new_rule = dict(OPTIONS)[chosen_label]
     if new_rule != current_rule:
@@ -136,12 +137,13 @@ def render_daily_mode() -> None:
         st.rerun()
     agg_rule = st.session_state.get(radio_key, new_rule)
 
-    # Кнопка «Обновить все графики» — только для суточного режима
+    # Кнопка «Обновить все графики» — показываем ТОЛЬКО когда данные загружены
     if "refresh_daily_all" not in st.session_state:
         st.session_state["refresh_daily_all"] = 0
-    if st.button("↻ Обновить все графики", use_container_width=True, key="btn_refresh_all_daily"):
-        st.session_state["refresh_daily_all"] += 1
-        st.rerun()
+    if df_day is not None and not df_day.empty:
+        if st.button("↻ Обновить все графики", use_container_width=True, key="btn_refresh_all_daily"):
+            st.session_state["refresh_daily_all"] += 1
+            st.rerun()
     ALL_TOKEN = st.session_state["refresh_daily_all"]
 
     # Агрегация по выбранному интервалу (только mean)
@@ -155,15 +157,14 @@ def render_daily_mode() -> None:
     token_main = refresh_bar("Суточный сводный график", "daily_main")
     default_main = [c for c in DEFAULT_PRESET if c in df_mean.columns] or list(df_mean.columns[:3])
 
-    # Мягкий режим (как в часовом): можно выбрать не более N-1 нормированных осей
     selected_main, separate_set = render_summary_controls(
         list(df_mean.columns),
         default_main,
-        key_prefix="daily__",   # отдельный namespace
-        strict=False,           # мягкий режим = поведение как в часовом
+        key_prefix="daily__",
+        strict=False,  # мягкий режим как в часовом
     )
 
-    # Если изменили нормировку осей — «как будто нажали Обновить»
+    # Автообновление сводного при смене нормировки
     norm_token = "__".join(sorted(separate_set)) if separate_set else "none"
     prev_norm_key = f"__daily_prev_norm_{day_key}"
     prev_norm = st.session_state.get(prev_norm_key)
@@ -175,7 +176,6 @@ def render_daily_mode() -> None:
         st.session_state[k] = int(st.session_state.get(k, 0)) + 1
         st.rerun()
 
-    # Ключ графика учитывает общую и локальную перерисовку
     sel_token = "__".join(selected_main) if selected_main else "none"
     agg_key = agg_rule
     chart_key = (
@@ -209,7 +209,6 @@ def render_daily_mode() -> None:
     render_group("Коэффициент мощности (PF)", "daily_grp_pf", df_mean,
                  ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
 
-    # Частота (если есть)
     freq_cols = [
         c for c in df_mean.columns
         if pd.api.types.is_numeric_dtype(df_mean[c]) and (
