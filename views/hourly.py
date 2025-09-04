@@ -15,6 +15,7 @@ from ui.groups import render_group, render_power_group
 
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    """Страховка: приводим нечисловые столбцы к числу; сбойные значения -> NaN."""
     df = df.copy()
     for c in df.columns:
         if not pd.api.types.is_numeric_dtype(df[c]):
@@ -25,18 +26,30 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _loaded_range_caption(df_current: pd.DataFrame) -> str | None:
-    if df_current is None or df_current.empty or not isinstance(df_current.index, pd.DatetimeIndex):
-        return None
-    start = pd.to_datetime(df_current.index.min())
-    end = pd.to_datetime(df_current.index.max())
-    if start.normalize() == end.normalize():
-        return f"Данные за {start.date().isoformat()} с {start:%H:%M} до {end:%H:%M} загружены."
-    else:
-        return (
-            f"Данные с {start.date().isoformat()} {start:%H:%M} "
-            f"до {end.date().isoformat()} {end:%H:%M} загружены."
-        )
+def _load_with_status_set_only(date_obj, hour: int) -> bool:
+    """UI-обёртка: загружаем 1 час с прогрессбаром и статусом как в суточных."""
+    with st.status(f"Готовим данные за {date_obj.isoformat()}…", expanded=True) as status:
+        prog = st.progress(0, text="Загружаем часы: 0/1")
+        ok = set_only_hour(date_obj, hour)
+        prog.progress(100, text="Загружаем часы: 1/1")
+        if ok:
+            status.update(label=f"Данные за {date_obj.isoformat()} загружены.", state="complete")
+        else:
+            status.update(label=f"Отсутствуют данные за {date_obj.isoformat()}.", state="error")
+    return ok
+
+
+def _load_with_status_append(date_obj, hour: int) -> bool:
+    """UI-обёртка: дозагружаем 1 час (второй) с тем же статусом."""
+    with st.status(f"Готовим данные за {date_obj.isoformat()}…", expanded=True) as status:
+        prog = st.progress(0, text="Загружаем часы: 0/1")
+        ok = append_hour(date_obj, hour)
+        prog.progress(100, text="Загружаем часы: 1/1")
+        if ok:
+            status.update(label=f"Данные за {date_obj.isoformat()} загружены.", state="complete")
+        else:
+            status.update(label=f"Отсутствуют данные за {date_obj.isoformat()}.", state="error")
+    return ok
 
 
 def render_hourly_mode() -> None:
@@ -44,11 +57,8 @@ def render_hourly_mode() -> None:
     st.markdown("### Дата и час")
     picked_date, picked_hour = render_date_hour_picker()
     if picked_date and picked_hour is not None:
-        ok = set_only_hour(picked_date, picked_hour)
-        if ok:
+        if _load_with_status_set_only(picked_date, picked_hour):
             st.rerun()
-        else:
-            st.warning(f"Отсутствуют данные за: {picked_date.isoformat()} {picked_hour:02d}:00")
 
     # Навигационные кнопки
     nav1, nav2, nav3, nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
@@ -66,45 +76,32 @@ def render_hourly_mode() -> None:
         base_h = st.session_state["current_hour"]
         if show_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            if set_only_hour(dt.date(), dt.hour):
+            if _load_with_status_set_only(dt.date(), dt.hour):
                 st.rerun()
-            else:
-                st.warning(f"Отсутствуют данные за: {dt.date().isoformat()} {dt.hour:02d}:00")
         if show_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            if set_only_hour(dt.date(), dt.hour):
+            if _load_with_status_set_only(dt.date(), dt.hour):
                 st.rerun()
-            else:
-                st.warning(f"Отсутствуют данные за: {dt.date().isoformat()} {dt.hour:02d}:00")
         if load_prev:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=-1)
-            if append_hour(dt.date(), dt.hour):
+            if _load_with_status_append(dt.date(), dt.hour):
                 st.rerun()
-            else:
-                st.warning(f"Отсутствуют данные за: {dt.date().isoformat()} {dt.hour:02d}:00")
         if load_next:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
-            if append_hour(dt.date(), dt.hour):
+            if _load_with_status_append(dt.date(), dt.hour):
                 st.rerun()
-            else:
-                st.warning(f"Отсутствуют данные за: {dt.date().isoformat()} {dt.hour:02d}:00")
 
     # Если нет данных — подскажем и не показываем кнопку
     if not st.session_state["loaded_hours"]:
         st.info("Выберите день и час.")
         st.stop()
 
-    # Сборка и страховка типов (нужно для подписи диапазона до кнопки)
+    # Сборка и страховка типов
     df_current = combined_df()
     if df_current.empty:
         st.info("Нет данных за выбранные час(ы). Попробуйте выбрать другой час.")
         st.stop()
     df_current = _coerce_numeric(df_current)
-
-    # ——— Подпись «Данные за … с … до … загружены» ———
-    cap = _loaded_range_caption(df_current)
-    if cap:
-        st.caption(cap)
 
     # Кнопка «Обновить график» — показываем ТОЛЬКО когда есть выбранные данные
     if "refresh_hourly_all" not in st.session_state:
