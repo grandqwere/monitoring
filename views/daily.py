@@ -43,7 +43,7 @@ def _get_daily_cache() -> dict[str, pd.DataFrame]:
     return st.session_state.setdefault("__daily_cache", {})
 
 
-def render_daily_mode(ALL_TOKEN: int) -> None:
+def render_daily_mode() -> None:
     st.markdown("### День")
     day = render_day_picker()
 
@@ -136,6 +136,14 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         st.rerun()
     agg_rule = st.session_state.get(radio_key, new_rule)
 
+    # Кнопка «Обновить все графики» — только для суточного режима
+    if "refresh_daily_all" not in st.session_state:
+        st.session_state["refresh_daily_all"] = 0
+    if st.button("↻ Обновить все графики", use_container_width=True, key="btn_refresh_all_daily"):
+        st.session_state["refresh_daily_all"] += 1
+        st.rerun()
+    ALL_TOKEN = st.session_state["refresh_daily_all"]
+
     # Агрегация по выбранному интервалу (только mean)
     df_day_num = df_day[[c for c in num_cols]]
     agg = aggregate_by(df_day_num, rule=agg_rule)
@@ -167,7 +175,7 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         st.session_state[k] = int(st.session_state.get(k, 0)) + 1
         st.rerun()
 
-    # Ключ графика учитывает «refresh_daily_main»
+    # Ключ графика учитывает общую и локальную перерисовку
     sel_token = "__".join(selected_main) if selected_main else "none"
     agg_key = agg_rule
     chart_key = (
