@@ -36,7 +36,8 @@ def _load_with_status_set_only(date_obj, hour: int) -> bool:
         ok = set_only_hour(date_obj, hour)
         prog.progress(100, text="Загружаем часы: 1/1")
         if ok:
-            status.update(label=f"Данные за {date_obj.isoformat()} загружены.", state="complete")
+            # Без финального текста «Данные за … загружены.»
+            status.update(state="complete")
         else:
             status.update(label=f"Отсутствуют данные за {date_obj.isoformat()}.", state="error")
     return ok
@@ -52,7 +53,8 @@ def _load_with_status_append(date_obj, hour: int) -> bool:
         ok = append_hour(date_obj, hour)
         prog.progress(100, text="Загружаем часы: 1/1")
         if ok:
-            status.update(label=f"Данные за {date_obj.isoformat()} загружены.", state="complete")
+            # Без финального текста «Данные за … загружены.»
+            status.update(state="complete")
         else:
             status.update(label=f"Отсутствуют данные за {date_obj.isoformat()}.", state="error")
     return ok
@@ -148,7 +150,7 @@ def render_hourly_mode() -> None:
     render_power_group(df_current, PLOT_HEIGHT, theme_base, ALL_TOKEN)
     render_group("Токи фаз L1–L3", "grp_curr", df_current,
                  ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Напряжение (фазное) L1–L3", "grp_urms", df_current,
+    render_group("Напряжение (фазное) L1–Л3", "grp_urms", df_current,
                  ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
     render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "grp_uline", df_current,
                  ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
