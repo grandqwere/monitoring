@@ -43,6 +43,22 @@ def _get_daily_cache() -> dict[str, pd.DataFrame]:
     return st.session_state.setdefault("__daily_cache", {})
 
 
+def _progress_bar_html(pct: int, color: str) -> str:
+    # color: 'blue' | 'green' | 'red'
+    palette = {
+        "blue":  "#1f77b4",
+        "green": "#21c354",
+        "red":   "#ff4b4b",
+    }
+    c = palette.get(color, "#1f77b4")
+    pct = max(0, min(100, int(pct)))
+    return f"""
+    <div style="width:100%;background:#e9ecef;border-radius:10px;overflow:hidden;height:18px;">
+      <div style="height:100%;width:{pct}%;background:{c};transition:width 150ms;"></div>
+    </div>
+    """
+
+
 def render_daily_mode(ALL_TOKEN: int) -> None:
     st.markdown("### День")
     day = render_day_picker()
@@ -68,43 +84,41 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
     day_key = day.strftime("%Y%m%d")
     daily_cache = _get_daily_cache()
 
-    # --- Загрузка 24 часов выбранной даты ОДИН РАЗ ---
+    # --- Загрузка 24 часов выбранной даты ОДИН РАЗ (только прогрессбар) ---
     if day_key in daily_cache:
-        # Уже загружено ранее — не трогаем сервер и не показываем прогресс
         df_day = daily_cache[day_key]
         if df_day is None or df_day.empty:
             # День ранее оказался пустым — не перезагружать автоматически
+            bar = st.empty()
+            bar.markdown(_progress_bar_html(100, "red"), unsafe_allow_html=True)
             st.error(f"Отсутствуют данные за {day.isoformat()}.")
             st.stop()
     else:
         frames: list[pd.DataFrame] = []
-        try:
-            with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
-                prog = st.progress(0, text="Загружаем часы")
-                for i, h in enumerate(range(24), start=1):
-                    dfh = load_hour(day, h, silent=True)  # отсутствие файла не шумит
-                    if dfh is not None and not dfh.empty:
-                        frames.append(dfh)
-                    prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
+        bar = st.empty()
+        text_ph = st.empty()
 
-                if not frames:
-                    # Помечаем день как неподтверждённый, чтобы не было автоперезагрузки
-                    st.session_state["selected_day_confirmed"] = False
-                    daily_cache[day_key] = pd.DataFrame()  # кэшируем «пусто», чтобы не перезагружать
-                    status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
-                    st.stop()
+        # В процессе — синий
+        for i, h in enumerate(range(24), start=1):
+            dfh = load_hour(day, h, silent=True)  # отсутствие файла не шумит
+            if dfh is not None and not dfh.empty:
+                frames.append(dfh)
+            pct = int(i / 24 * 100)
+            bar.markdown(_progress_bar_html(pct, "blue"), unsafe_allow_html=True)
+            text_ph.text(f"Загружаем часы: {i}/24")
 
-                status.update(label=f"Данные за {day.isoformat()} загружены.", state="complete")
-        except Exception:
-            for h in range(24):
-                dfh = load_hour(day, h, silent=True)
-                if dfh is not None and not dfh.empty:
-                    frames.append(dfh)
-            if not frames:
-                st.session_state["selected_day_confirmed"] = False
-                daily_cache[day_key] = pd.DataFrame()
-                st.error(f"Отсутствуют данные за {day.isoformat()}.")
-                st.stop()
+        if not frames:
+            # Финал — красный
+            bar.markdown(_progress_bar_html(100, "red"), unsafe_allow_html=True)
+            text_ph.empty()
+            st.session_state["selected_day_confirmed"] = False
+            daily_cache[day_key] = pd.DataFrame()  # кэшируем «пусто»
+            st.error(f"Отсутствуют данные за {day.isoformat()}.")
+            st.stop()
+
+        # Финал — зелёный
+        bar.markdown(_progress_bar_html(100, "green"), unsafe_allow_html=True)
+        text_ph.empty()
 
         df_day = pd.concat(frames).sort_index()
         df_day = _coerce_numeric(df_day)
@@ -164,11 +178,24 @@ def render_daily_mode(ALL_TOKEN: int) -> None:
         strict=True,  # строгий режим — без «инверсии» галочек
     )
 
-    # Пересоздаём график при любом изменении выбора
-    sel_token = "__".join(selected_main) if selected_main else "none"
+    # Если изменили только нормировку осей — «как будто нажали Обновить»
     norm_token = "__".join(sorted(separate_set)) if separate_set else "none"
+    prev_norm_key = f"__daily_prev_norm_{day_key}"
+    prev_norm = st.session_state.get(prev_norm_key)
+    if prev_norm is None:
+        st.session_state[prev_norm_key] = norm_token
+    elif prev_norm != norm_token:
+        st.session_state[prev_norm_key] = norm_token
+        # инкрементим счётчик панели и перерисовываем как при клике «↻ Обновить»
+        k = "refresh_daily_main"
+        st.session_state[k] = int(st.session_state.get(k, 0)) + 1
+        st.rerun()
+
+    # Ключ графика учитывает «refresh_daily_main»
+    sel_token = "__".join(selected_main) if selected_main else "none"
     agg_key = agg_rule
-    chart_key = f"daily_main_{ALL_TOKEN}_{day_key}_{agg_key}_{sel_token}_{norm_token}_{token_main}"
+    day_token = day_key
+    chart_key = f"daily_main_{ALL_TOKEN}_{day_token}_{agg_key}_{sel_token}_{norm_token}_{st.session_state.get('refresh_daily_main',0)}"
 
     fig_main = main_chart(
         df=df_mean,
