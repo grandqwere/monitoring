@@ -48,3 +48,11 @@ def build_all_key_for(d: date, hour: int) -> str:
     day_folder = f"{d.year:04d}.{d.month:02d}.{d.day:02d}"
     subpath = f"All/{day_folder}"
     return build_key_for(d, hour, subdir=subpath)
+
+def build_root_key(filename: str) -> str:
+    """
+    Ключ для файла в КОРНЕ текущего префикса (например: <prefix>/description.txt).
+    """
+    current_prefix = st.session_state.get("current_prefix", "")
+    base = _join_prefix(current_prefix, None)  # даст "prefix/" или ""
+    return f"{base}{filename}"
