@@ -47,7 +47,7 @@ if not st.session_state.get("auth_ok", False):
             st.session_state["auth_mode"] = "password"
             st.session_state["current_prefix"] = prefix
             _clear_all_caches()
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.error("Неверный пароль. Проверьте и попробуйте ещё раз.")
             st.stop()
@@ -60,7 +60,7 @@ if not st.session_state.get("auth_ok", False):
         st.session_state["auth_mode"] = "demo"
         st.session_state["current_prefix"] = demo_prefix
         _clear_all_caches()
-        st.experimental_rerun()
+        st.rerun()
 
     # Пока не вошёл — дальше приложение не рисуем
     st.stop()
@@ -73,7 +73,7 @@ with st.container():
     with right:
         if st.button("Выйти", use_container_width=True):
             st.session_state.clear()
-            st.experimental_rerun()
+            st.rerun()
 
 # Инициализация режима: по умолчанию — суточный
 if "mode" not in st.session_state:
