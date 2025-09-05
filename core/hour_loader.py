@@ -25,14 +25,6 @@ def init_hour_state():
 def _key_for(d: date_cls, h: int) -> str:
     return f"{d.isoformat()}T{h:02d}"
 
-def _demo_map_day(user_day: date_cls) -> date_cls:
-    """
-    В демо-режиме всегда читаем данные из августа 2025.
-    Берём тот же номер дня (1..31), ограничиваем по 31.
-    """
-    day = min(user_day.day, 31)
-    return date_cls(2025, 8, day)
-
 def _reassign_index_date_keep_time(df: pd.DataFrame, new_day: date_cls) -> pd.DataFrame:
     """
     Заменяем компонент ДАТЫ в индексе на new_day, оставляя часы/минуты/секунды как есть.
@@ -62,11 +54,15 @@ def load_hour(d: date_cls, h: int, *, silent: bool = True) -> pd.DataFrame | Non
     # но индекс в данных позже "перешиваем" на выбранную пользователем дату d.
     is_demo = (st.session_state.get("auth_mode") == "demo")
     read_day = _demo_map_day(d) if is_demo else d
-    s3_key = build_all_key_for(read_day, h)
+    # Ключ строится на реальной выбранной дате d; в DEMO дата для чтения
+    # маппится на август-2025 внутри core/s3_paths.py (build_all_key_for).
+    s3_key = build_all_key_for(d, h)
     try:
         df_raw = read_csv_s3(s3_key)
         df = normalize(df_raw)
-        if is_demo and read_day != d:
+        # В DEMO «перешиваем» индекс на выбранную пользователем дату,
+        # чтобы ось X соответствовала его выбору (месяц/год).
+        if st.session_state.get("auth_mode") == "demo":
             df = _reassign_index_date_keep_time(df, d)
         cache[k] = df
         return df
