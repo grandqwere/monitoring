@@ -5,13 +5,14 @@ from core import state
 from views.daily import render_daily_mode
 from views.hourly import render_hourly_mode
 from core.hour_loader import init_hour_state
+from core.data_io import read_text_s3
+from core.s3_paths import build_root_key
 
 st.set_page_config(page_title="Мониторинг электрических параметров", layout="wide")
 state.init_once()
 init_hour_state() 
 
-# Заголовок страницы (уменьшенный)
-st.markdown("<h3 style='margin:0'>Мониторинг электрических параметров</h3>", unsafe_allow_html=True)
+# (Заголовок теперь рисуем ПОСЛЕ входа — из description.txt)
 
 # -------------------- ПРОСТОЙ ДОСТУП: пароль / демо --------------------
 # Секреты: [auth].demo_prefix и [auth].password_to_prefix (см. Secrets в Streamlit Cloud)
@@ -65,15 +66,29 @@ if not st.session_state.get("auth_ok", False):
     # Пока не вошёл — дальше приложение не рисуем
     st.stop()
 
-# Кнопка «Выйти» (сбросить доступ) и бейдж текущей папки
-with st.container():
-    left, right = st.columns([0.7, 0.3])
-    with left:
-        st.caption(f"Источник данных: `{st.session_state.get('current_prefix', '—')}`")
-    with right:
-        if st.button("Выйти", use_container_width=True):
-            st.session_state.clear()
-            st.rerun()
+# Заголовок страницы: первая строка из <current_prefix>/description.txt
+def _current_title() -> str:
+    default = "Мониторинг электрических параметров"
+    try:
+        key = build_root_key("description.txt")
+        txt = read_text_s3(key)
+        if txt:
+            first = txt.splitlines()[0].strip()
+            if first:
+                return first
+    except Exception:
+        pass
+    return default
+
+st.markdown(f"<h3 style='margin:0'>{_current_title()}</h3>", unsafe_allow_html=True)
+
+# Кнопка «Выйти» (без строки «Источник данных»)
+right = st.columns([0.8, 0.2])[1]
+with right:
+    if st.button("Выйти", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
+
 
 # Инициализация режима: по умолчанию — суточный
 if "mode" not in st.session_state:
