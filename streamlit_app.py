@@ -30,20 +30,17 @@ def _clear_all_caches():
 # Если пользователь ещё не авторизован — показываем форму входа / демо
 if not st.session_state.get("auth_ok", False):
     st.markdown("#### Доступ")
-    # Левая колонка: форма логина (Enter отправляет форму)
-    # Правая колонка: отдельная кнопка «Демо-режим»
-    col_form, col_demo = st.columns([0.7, 0.3])
-    with col_form:
-        with st.form("auth_form", clear_on_submit=False):
-            pwd = st.text_input(
-                "Пароль",
-                type="password",
-                key="auth_pwd",
-                placeholder="Введите пароль",
-            )
-            btn_login = st.form_submit_button("Войти", use_container_width=True)
-    with col_demo:
-        btn_demo = st.button("Демо-режим", use_container_width=True)
+    # Форма логина (Enter отправляет форму)
+    with st.form("auth_form", clear_on_submit=False):
+        pwd = st.text_input(
+            "Пароль",
+            type="password",
+            key="auth_pwd",
+            placeholder="Введите пароль",
+        )
+        btn_login = st.form_submit_button("Войти", use_container_width=True)
+    # Кнопка «Демо-режим» — отдельным блоком ПОД формой
+    btn_demo = st.button("Демо-режим", use_container_width=True)
 
     auth_conf = dict(st.secrets.get("auth", {}))
     mapping = dict(auth_conf.get("password_to_prefix", {}))
