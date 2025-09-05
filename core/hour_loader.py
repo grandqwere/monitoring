@@ -52,8 +52,6 @@ def load_hour(d: date_cls, h: int, *, silent: bool = True) -> pd.DataFrame | Non
 
     # Для демо-режима («auth_mode == demo») читаем август 2025 того же дня/часа,
     # но индекс в данных позже "перешиваем" на выбранную пользователем дату d.
-    is_demo = (st.session_state.get("auth_mode") == "demo")
-    read_day = _demo_map_day(d) if is_demo else d
     # Ключ строится на реальной выбранной дате d; в DEMO дата для чтения
     # маппится на август-2025 внутри core/s3_paths.py (build_all_key_for).
     s3_key = build_all_key_for(d, h)
