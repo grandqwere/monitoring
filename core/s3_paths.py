@@ -6,8 +6,6 @@ def _s3_secrets() -> dict:
     s = dict(st.secrets.get("s3", {}))
     # Имя файла (без папок). По умолчанию: All-YYYY.MM.DD-HH.00.csv
     s.setdefault("key_template", "All-{YYYY}.{MM}.{DD}-{HH}.00.csv")
-    # Внешний префикс (например: "deviceA/"). Оставляем как есть.
-    s.setdefault("prefix", s.get("prefix", ""))
     return s
 
 def _join_prefix(prefix: str, subpath: str | None) -> str:
@@ -37,7 +35,9 @@ def build_key_for(d: date, hour: int, subdir: str | None = None) -> str:
     """Универсальный сборщик ключей: prefix + (subdir/) + filename."""
     s = _s3_secrets()
     fname = _render_filename(s["key_template"], d, hour)
-    base = _join_prefix(s["prefix"], subdir)
+    # Текущий «корень» S3 задаётся при входе (пароль/демо) и лежит в session_state
+    current_prefix = st.session_state.get("current_prefix", "")
+    base = _join_prefix(current_prefix, subdir)
     return f"{base}{fname}"
 
 def build_all_key_for(d: date, hour: int) -> str:
