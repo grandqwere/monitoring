@@ -58,10 +58,16 @@ def load_hour(d: date_cls, h: int, *, silent: bool = True) -> pd.DataFrame | Non
     if k in cache:
         return cache[k]
 
-    s3_key = build_all_key_for(d, h)
+    # Для демо-режима («auth_mode == demo») читаем август 2025 того же дня/часа,
+    # но индекс в данных позже "перешиваем" на выбранную пользователем дату d.
+    is_demo = (st.session_state.get("auth_mode") == "demo")
+    read_day = _demo_map_day(d) if is_demo else d
+    s3_key = build_all_key_for(read_day, h)
     try:
         df_raw = read_csv_s3(s3_key)
         df = normalize(df_raw)
+        if is_demo and read_day != d:
+            df = _reassign_index_date_keep_time(df, d)
         cache[k] = df
         return df
     except Exception:
