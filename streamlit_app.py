@@ -33,10 +33,10 @@ if not st.session_state.get("auth_ok", False):
     # Форма логина (Enter отправляет форму)
     with st.form("auth_form", clear_on_submit=False):
         pwd = st.text_input(
-            "Пароль",
+            "Код доступа",
             type="password",
             key="auth_pwd",
-            placeholder="Введите пароль",
+            placeholder="Введите код доступа",
         )
         btn_login = st.form_submit_button("Войти", use_container_width=True)
     # Кнопка «Демо-режим» — отдельным блоком ПОД формой
