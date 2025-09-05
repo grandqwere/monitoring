@@ -4,8 +4,6 @@ import streamlit as st
 
 def _s3_secrets() -> dict:
     s = dict(st.secrets.get("s3", {}))
-    # Имя файла (без папок). По умолчанию: All-YYYY.MM.DD-HH.00.csv
-    s.setdefault("key_template", "All-{YYYY}.{MM}.{DD}-{HH}.00.csv")
     return s
 
 def _join_prefix(prefix: str, subpath: str | None) -> str:
@@ -31,10 +29,30 @@ def _render_filename(tpl: str, d: date, hour: int) -> str:
            .replace("{mm}", "00")
     )
 
+def _is_demo_mode() -> bool:
+    """Определяем демо-режим: auth_mode == 'demo' или текущий префикс совпадает с auth.demo_prefix."""
+    try:
+        if st.session_state.get("auth_mode") == "demo":
+            return True
+        demo_pref = str(st.secrets.get("auth", {}).get("demo_prefix", "")).strip().rstrip("/")
+        curr_pref = str(st.session_state.get("current_prefix", "")).strip().rstrip("/")
+        return bool(demo_pref and curr_pref and demo_pref == curr_pref)
+    except Exception:
+        return False
+
+def _map_day_for_storage(d: date) -> date:
+    """В демо всегда читаем данные за тот же день августа 2025 (1..31). Вне демо — дата без изменений."""
+    if _is_demo_mode():
+        return date(2025, 8, min(d.day, 31))
+    return d
+
 def build_key_for(d: date, hour: int, subdir: str | None = None) -> str:
-    """Универсальный сборщик ключей: prefix + (subdir/) + filename."""
+    """Универсальный сборщик ключей: current_prefix (из session_state) + (subdir/) + filename.
+       В демо-режиме дата для ЧТЕНИЯ маппится на август 2025 того же номера дня.
+    """
     s = _s3_secrets()
-    fname = _render_filename(s["key_template"], d, hour)
+    d_eff = _map_day_for_storage(d)
+    fname = _render_filename(s["key_template"], d_eff, hour)
     # Текущий «корень» S3 задаётся при входе (пароль/демо) и лежит в session_state
     current_prefix = st.session_state.get("current_prefix", "")
     base = _join_prefix(current_prefix, subdir)
@@ -45,9 +63,18 @@ def build_all_key_for(d: date, hour: int) -> str:
     Часовые файлы из папки All/ с дневными подпапками:
     <prefix>/All/YYYY.MM.DD/All-YYYY.MM.DD-HH.00.csv
     """
-    day_folder = f"{d.year:04d}.{d.month:02d}.{d.day:02d}"
+    d_eff = _map_day_for_storage(d)
+    day_folder = f"{d_eff.year:04d}.{d_eff.month:02d}.{d_eff.day:02d}"
     subpath = f"All/{day_folder}"
     return build_key_for(d, hour, subdir=subpath)
+
+def build_root_key(filename: str) -> str:
+    """
+    Ключ для файла в КОРНЕ текущего префикса (например: <prefix>/description.txt).
+    """
+    current_prefix = st.session_state.get("current_prefix", "")
+    base = _join_prefix(current_prefix, None)  # даст "prefix/" или ""
+    return f"{base}{filename}"
 
 def build_root_key(filename: str) -> str:
     """
