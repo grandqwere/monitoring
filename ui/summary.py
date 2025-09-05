@@ -23,11 +23,14 @@ def render_summary_controls(
     """
     main_key = f"{key_prefix}main_fields"
 
+    # Заголовок как у блока ниже — жирным
+    st.markdown("Поля сводного графика")
     selected_main = st.multiselect(
-        "Поля для сводного графика",
+        "Поля сводного графика",
         options=num_cols,
         default=default_main,
         key=main_key,
+        label_visibility="collapsed",
     )
 
     st.markdown("Добавить отдельную шкалу для выбранных трендов:")
