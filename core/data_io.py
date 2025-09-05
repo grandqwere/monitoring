@@ -73,6 +73,23 @@ def read_csv_s3(key: str) -> pd.DataFrame:
     data = obj["Body"].read()
     return _read_csv_bytes(data)
 
+def read_text_s3(key: str) -> str:
+    """
+    Прочитать текстовый файл из S3 и вернуть как str.
+    Возвращает "" при ошибке/отсутствии объекта.
+    """
+    try:
+        client = _get_s3_client()
+        obj = client.get_object(Bucket=_bucket_name(), Key=key)
+        data = obj["Body"].read()
+        try:
+            return data.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            # запасной вариант, если файл в win-1251
+            return data.decode("cp1251", errors="ignore").strip()
+    except Exception:
+        return ""
+
 # --- (остальной код S3: head/available_hours... можно оставить без изменений, если используется) ---
 
 # --- Заглушки для старого календаря (безопасно удалить, если не нужны) ---
