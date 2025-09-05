@@ -3,7 +3,20 @@ from datetime import date
 import streamlit as st
 
 def _s3_secrets() -> dict:
-    s = dict(st.secrets.get("s3", {}))
+    """
+    Безопасно извлекаем секцию [s3] из Secrets и гарантируем дефолты.
+    """
+    s: dict = {}
+    try:
+        raw = st.secrets.get("s3", {})
+        # .items() есть у стандартного маппинга Secrets
+        for k, v in getattr(raw, "items", lambda: [])():
+            s[k] = v
+    except Exception:
+        pass
+    # Гарантированный шаблон имени файла, если его нет в Secrets
+    if not s.get("key_template"):
+        s["key_template"] = "All-{YYYY}.{MM}.{DD}-{HH}.00.csv"
     return s
 
 def _join_prefix(prefix: str, subpath: str | None) -> str:
@@ -52,7 +65,8 @@ def build_key_for(d: date, hour: int, subdir: str | None = None) -> str:
     """
     s = _s3_secrets()
     d_eff = _map_day_for_storage(d)
-    fname = _render_filename(s["key_template"], d_eff, hour)
+    tpl = s.get("key_template") or "All-{YYYY}.{MM}.{DD}-{HH}.00.csv"
+    fname = _render_filename(tpl, d_eff, hour)
     # Текущий «корень» S3 задаётся при входе (пароль/демо) и лежит в session_state
     current_prefix = st.session_state.get("current_prefix", "")
     base = _join_prefix(current_prefix, subdir)
