@@ -15,7 +15,6 @@ from botocore.exceptions import ClientError
 def _s3_secrets() -> dict:
     s = dict(st.secrets.get("s3", {}))
     s.setdefault("bucket", os.getenv("S3_BUCKET", ""))
-    s.setdefault("prefix", os.getenv("S3_PREFIX", ""))
     s.setdefault("region", os.getenv("AWS_DEFAULT_REGION", "eu-central-1"))
     s.setdefault("endpoint_url", os.getenv("S3_ENDPOINT_URL", ""))
     s.setdefault("aws_access_key_id", os.getenv("AWS_ACCESS_KEY_ID", ""))
