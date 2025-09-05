@@ -24,7 +24,7 @@ def render_summary_controls(
     main_key = f"{key_prefix}main_fields"
 
     # Заголовок как у блока ниже — жирным
-    st.markdown("Поля сводного графика")
+    st.markdown("Поля сводного графика:")
     selected_main = st.multiselect(
         "Поля сводного графика",
         options=num_cols,
