@@ -34,7 +34,7 @@ def render_power_group(df: pd.DataFrame, height: int, theme_base: str, all_token
         s = find_first(df.columns, f"S_{tag}")
         q = find_first(df.columns, f"Q_{tag}")
         n = find_first(df.columns, f"N_{tag}", f"N{'' if tag=='total' else '_' + tag}")
-        for c in [p, s, q, n]:
+        for c in [s, p, n, q]:
             if c and c in df.columns:
                 power_cols.append(c)
 
