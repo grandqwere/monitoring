@@ -13,7 +13,7 @@ from core.plotting import main_chart
 from ui.refresh import refresh_bar
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
-from ui.day import render_day_picker, day_nav_buttons, shift_day
+from ui.day import render_day_picker, day_nav_buttons
 
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
@@ -47,17 +47,11 @@ def render_daily_mode() -> None:
     if "selected_day" not in st.session_state:
         st.session_state["selected_day"] = date_cls.today()
 
-    # Кнопки навигации — ДО render_day_picker()
-    prev_day, next_day = day_nav_buttons(enabled=True)
-    if prev_day:
-        st.session_state["selected_day"] = shift_day(st.session_state["selected_day"], -1)
-        st.rerun()
-    if next_day:
-        st.session_state["selected_day"] = shift_day(st.session_state["selected_day"], +1)
-        st.rerun()
-
     # Календарь — ОДИН раз
     day = render_day_picker()
+    # Кнопки навигации — ПОД календарём (сдвиг даты делает callback в ui/day.py)
+    day_nav_buttons(enabled=day is not None)
+
     if not day:
         st.info("Выберите дату.")
         return
