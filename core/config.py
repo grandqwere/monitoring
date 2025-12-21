@@ -17,7 +17,7 @@ GROUPS = {
 }
 
 # Что показывать на сводном графике по умолчанию
-DEFAULT_PRESET = ["P_total", "S_total", "Q_total"]
+DEFAULT_PRESET = ["S_total", "P_total",  "N_total", "Q_total"]
 
 # Лимиты точек (прореживание)
 MAX_POINTS_MAIN = 5000
