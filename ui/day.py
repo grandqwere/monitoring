@@ -3,19 +3,14 @@ from datetime import date, timedelta
 import streamlit as st
 
 def render_day_picker() -> date:
-    """
-    Календарь БЕЗ кнопки подтверждения:
-    при выборе даты сразу сохраняем её в состоянии и строим графики.
-    """
     if "selected_day" not in st.session_state:
         st.session_state["selected_day"] = date.today()
 
     with st.expander("Выбрать день", expanded=False):
         st.date_input(
             "Дата",
-            value=st.session_state["selected_day"],
-            format="YYYY-MM-DD",
             key="selected_day",
+            format="YYYY-MM-DD",
         )
 
     return st.session_state["selected_day"]
