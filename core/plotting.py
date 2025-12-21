@@ -108,6 +108,7 @@ def main_chart(
         fig.update_layout(**{
             yaxis_name: dict(
                 overlaying="y",
+                anchor="free",
                 side="left",
                 position=pos_val,
                 showgrid=False,
@@ -248,7 +249,7 @@ def daily_main_chart(
         axis_idx += 1
         yaxis_name, yref = f"yaxis{axis_idx}", f"y{axis_idx}"
         fig.update_layout(**{yaxis_name: dict(
-            overlaying="y", side="left", position=min(pos_max, pos_start + j*pos_step),
+            overlaying="y", anchor="free", side="left", position=min(pos_max, pos_start + j*pos_step),
             showgrid=False, zeroline=False, title=None, tickfont=dict(color=color_map[c]),
         )})
         fig.add_trace(go.Scattergl(
