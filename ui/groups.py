@@ -21,7 +21,7 @@ def render_group(title: str, key_suffix: str, df: pd.DataFrame, cols: list[str],
     st.plotly_chart(fig, use_container_width=True, config={"responsive": True}, key=f"{key_suffix}_{all_token}_{token}")
 
 def render_power_group(df: pd.DataFrame, height: int, theme_base: str, all_token: int):
-    token = refresh_bar("Мощность: активная / полная / реактивная / неактивная", "grp_power")
+    token = refresh_bar("Мощность: полная / активная / неактивная / реактивная ", "grp_power")
     c1, c2, c3, c4 = st.columns(4)
     with c1: show_total = st.checkbox("Общие", True, key="p_sel_total")
     with c2: show_l1    = st.checkbox("Фаза L1", False, key="p_sel_l1")
