@@ -11,16 +11,14 @@ def render_day_picker() -> date:
         st.session_state["selected_day"] = date.today()
 
     with st.expander("Выбрать день", expanded=False):
-        picked = st.date_input(
+        st.date_input(
             "Дата",
             value=st.session_state["selected_day"],
             format="YYYY-MM-DD",
-            key="date_pick_day",
+            key="selected_day",
         )
 
-    # date_input сам триггерит перерисовку — достаточно сохранить выбор
-    st.session_state["selected_day"] = picked
-    return picked
+    return st.session_state["selected_day"]
 
 def day_nav_buttons(enabled: bool) -> tuple[bool, bool]:
     """Кнопки 'Показать предыдущий/следующий день'."""
