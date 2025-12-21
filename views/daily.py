@@ -49,14 +49,16 @@ def render_daily_mode() -> None:
 
     day = render_day_picker()
 
-    # Навигация днями
-    prev_day, next_day = day_nav_buttons(enabled=day is not None)
-    if day and prev_day:
-        st.session_state["selected_day"] = shift_day(day, -1)
+    # Навигация днями — ДО render_day_picker(), иначе нельзя менять ключ виджета "selected_day"
+    prev_day, next_day = day_nav_buttons(enabled=True)
+    if prev_day:
+        st.session_state["selected_day"] = shift_day(st.session_state["selected_day"], -1)
         st.rerun()
-    if day and next_day:
-        st.session_state["selected_day"] = shift_day(day, +1)
+    if next_day:
+        st.session_state["selected_day"] = shift_day(st.session_state["selected_day"], +1)
         st.rerun()
+
+    day = render_day_picker()
 
     if not day:
         st.info("Выберите дату.")
