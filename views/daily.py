@@ -26,15 +26,6 @@ def render_daily_mode() -> None:
     day_key = day.strftime("%Y%m%d")
     daily_cache = _get_daily_cache()
 
-    # (опционально) Если хочешь, чтобы кнопка "↻ Обновить..." перечитывала данные с S3:
-    # if st.session_state.pop("__reload_requested", False):
-    #     daily_cache.pop(day_key, None)
-    #     try:
-    #         from core.hour_loader import invalidate_day
-    #         invalidate_day(day)
-    #     except Exception:
-    #         pass
-
     # --- Загрузка 24 часов выбранной даты ОДИН РАЗ ---
     if day_key in daily_cache:
         df_day = daily_cache[day_key]
