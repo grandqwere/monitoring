@@ -1,3 +1,4 @@
+# core/config.py
 from __future__ import annotations
 
 # Колонка времени во входных CSV
@@ -17,11 +18,15 @@ GROUPS = {
 }
 
 # Что показывать на сводном графике по умолчанию
-DEFAULT_PRESET = ["S_total", "P_total",  "N_total", "Q_total"]
+DEFAULT_PRESET = ["S_total", "P_total", "N_total", "Q_total"]
 
-# Лимиты точек (прореживание)
+# Лимиты точек (прореживание) — часовые/суточные
 MAX_POINTS_MAIN = 5000
 MAX_POINTS_GROUP = 5000
+
+# Лимиты точек (прореживание) — минутные (Ipeak/Upeak), 2 минуты ~ 6000 точек
+MAX_POINTS_MINUTE_MAIN = 20000
+MAX_POINTS_MINUTE_GROUP = 20000
 
 # Фиксированная высота всех графиков (px)
 PLOT_HEIGHT = 500
