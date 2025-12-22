@@ -1,16 +1,21 @@
+# streamlit_app.py
 from __future__ import annotations
+
 import streamlit as st
 
 from core import state
 from views.daily import render_daily_mode
 from views.hourly import render_hourly_mode
+from views.minutely import render_minutely_mode  # NEW
 from core.hour_loader import init_hour_state
+from core.minute_loader import init_minute_state  # NEW
 from core.data_io import read_text_s3
 from core.s3_paths import build_root_key
 
 st.set_page_config(page_title="Мониторинг электрических параметров", layout="wide")
 state.init_once()
-init_hour_state() 
+init_hour_state()
+init_minute_state()  # NEW
 
 # (Заголовок теперь рисуем ПОСЛЕ входа — из description.txt)
 
@@ -19,13 +24,24 @@ init_hour_state()
 def _clear_all_caches():
     """Полный сброс данных/кэшей при смене источника (папки) или выхода."""
     for k in [
+        # hourly
         "loaded_hours", "hour_cache", "current_date", "current_hour",
         "selected_date", "selected_day_confirmed",
         "__daily_cache", "__daily_active_day_key",
         "refresh_daily_all", "refresh_hourly_all",
+        "__pending_date", "__pending_hour",
+        "__picker_redraw",
+        # minutely (NEW)
+        "loaded_minutes", "minute_cache",
+        "current_minute_date", "current_minute_hour", "current_minute_minute",
+        "selected_minute_date", "selected_minute_hour",
+        "__pending_minute_date", "__pending_minute_hour", "__pending_minute_minute",
+        "__minute_picker_redraw",
+        "refresh_minutely_all",
     ]:
         if k in st.session_state:
             del st.session_state[k]
+
 
 # Если пользователь ещё не авторизован — показываем форму входа / демо
 if not st.session_state.get("auth_ok", False):
@@ -71,6 +87,7 @@ if not st.session_state.get("auth_ok", False):
     # Пока не вошёл — дальше приложение не рисуем
     st.stop()
 
+
 # Заголовок страницы: первая строка из <current_prefix>/description.txt
 def _current_title() -> str:
     default = "Мониторинг электрических параметров"
@@ -84,6 +101,7 @@ def _current_title() -> str:
     except Exception:
         pass
     return default
+
 
 st.markdown(f"<h3 style='margin:0'>{_current_title()}</h3>", unsafe_allow_html=True)
 
@@ -101,11 +119,17 @@ if "mode" not in st.session_state:
 
 # Предвыбор активной кнопки в переключателе
 if "mode_segmented" not in st.session_state:
-    st.session_state["mode_segmented"] = "Суточные" if st.session_state["mode"] == "daily" else "Часовые"
+    if st.session_state["mode"] == "minutely":
+        st.session_state["mode_segmented"] = "Минутные"
+    elif st.session_state["mode"] == "hourly":
+        st.session_state["mode_segmented"] = "Часовые"
+    else:
+        st.session_state["mode_segmented"] = "Суточные"
 
 # Горизонтальный переключатель «Вид графиков»
 label = "Вид графиков"
-options = ["Часовые", "Суточные"]
+options = ["Минутные", "Часовые", "Суточные"]
+
 try:
     chosen = st.segmented_control(
         label,
@@ -114,18 +138,30 @@ try:
     )
 except Exception:
     # Фолбэк для старых версий Streamlit
+    idx = 2  # daily
+    if st.session_state["mode"] == "minutely":
+        idx = 0
+    elif st.session_state["mode"] == "hourly":
+        idx = 1
     chosen = st.radio(
         label,
         options=options,
         horizontal=True,
-        index=(1 if st.session_state["mode"] == "daily" else 0),
+        index=idx,
         key="mode_segmented",
     )
 
-st.session_state["mode"] = "daily" if chosen == "Суточные" else "hourly"
+if chosen == "Минутные":
+    st.session_state["mode"] = "minutely"
+elif chosen == "Суточные":
+    st.session_state["mode"] = "daily"
+else:
+    st.session_state["mode"] = "hourly"
 
 # Роутинг по режимам
-if st.session_state["mode"] == "daily":
+if st.session_state["mode"] == "minutely":
+    render_minutely_mode()
+elif st.session_state["mode"] == "daily":
     render_daily_mode()
 else:
     render_hourly_mode()
