@@ -229,8 +229,8 @@ def minutely_summary_chart(
 ) -> go.Figure:
     """
     Минутный сводный (Ipeak+Upeak):
-      - Upeak_* на левой оси (y),
-      - Ipeak_* на правой оси (y2),
+      - Ipeak_* на ЛЕВОЙ оси (y),
+      - Upeak_* на ПРАВОЙ оси (y2),
       - рассинхрон допускается (df уже объединён outer-join'ом),
       - лимиты точек отдельные (MAX_POINTS_MINUTE_MAIN).
     """
@@ -267,19 +267,20 @@ def minutely_summary_chart(
     if df is None or df.empty or not isinstance(df.index, pd.DatetimeIndex):
         return fig
 
-    u_cols = [c for c in df.columns if str(c).startswith(u_prefix)]
     i_cols = [c for c in df.columns if str(c).startswith(i_prefix)]
-    if not u_cols and not i_cols:
+    u_cols = [c for c in df.columns if str(c).startswith(u_prefix)]
+    if not i_cols and not u_cols:
         return fig
 
-    # порядок: сначала U (слева), затем I (справа) — стабильное назначение цветов
-    ordered = u_cols + i_cols
+    # порядок: сначала I (слева), затем U (справа) — стабильное назначение цветов
+    ordered = i_cols + u_cols
     df_plot = _stride(df[ordered], MAX_POINTS_MINUTE_MAIN)
 
     cw = list(params["colorway"])
     color_map: Dict[str, str] = {c: cw[i % len(cw)] for i, c in enumerate(ordered)}
 
-    for c in u_cols:
+    # Ipeak -> левая ось
+    for c in i_cols:
         fig.add_trace(
             go.Scattergl(
                 x=df_plot.index,
@@ -292,7 +293,8 @@ def minutely_summary_chart(
             )
         )
 
-    for c in i_cols:
+    # Upeak -> правая ось
+    for c in u_cols:
         fig.add_trace(
             go.Scattergl(
                 x=df_plot.index,
