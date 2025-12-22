@@ -49,7 +49,6 @@ def _load_with_status_set_only(date_obj, hour: int, minute: int, *, status_area)
                 )
                 st.warning(f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:{minute:02d}.")
     if not ok:
-        # очистка минутного стейта (без затрагивания часового/суточного)
         st.session_state["loaded_minutes"] = []
         st.session_state["minute_cache"] = {}
         st.session_state["current_minute_date"] = None
@@ -96,14 +95,13 @@ def _redraw_picker(picker_ph) -> None:
 def render_minutely_mode() -> None:
     st.markdown("### Дата, час и минута")
 
-    # Плейсхолдеры: сначала пикер, затем статус — порядок фиксирован
     picker_ph = st.empty()
     status_ph = st.empty()
 
-    # 1) Сначала рисуем пикер
+    # 1) Пикер
     _draw_picker(picker_ph)
 
-    # 2) Обрабатываем клик по минуте (из __pending_minute_*) и ПЕРЕРИСОВЫВАЕМ пикер
+    # 2) Клик по минуте (pending)
     pend_d = st.session_state.pop("__pending_minute_date", None)
     pend_h = st.session_state.pop("__pending_minute_hour", None)
     pend_m = st.session_state.pop("__pending_minute_minute", None)
@@ -171,8 +169,8 @@ def render_minutely_mode() -> None:
         st.rerun()
     ALL_TOKEN = st.session_state["refresh_minutely_all"]
 
-    # --- График 1: сводный (две оси) ---
-    token_sum = refresh_bar("Минутный сводный график: Upeak + Ipeak", "minutely_summary")
+    # --- График 1: сводный (две оси: I слева, U справа) ---
+    token_sum = refresh_bar("Минутный сводный график: Ipeak + Upeak", "minutely_summary")
     fig_sum = minutely_summary_chart(df_current, height=PLOT_HEIGHT, theme_base=theme_base)
     st.plotly_chart(
         fig_sum,
