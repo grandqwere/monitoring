@@ -34,9 +34,10 @@ def _mark_pending(date_obj: date, hour: int, minute: int) -> None:
 def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = True) -> tuple[date, int | None, int | None]:
     """
     Пикер: дата + час + минута.
-    Подсветка:
-      - ЧАС: подсвечиваем, если в st.session_state['loaded_minutes'] есть хоть одна минутная выборка для этого часа.
-      - МИНУТА: подсвечиваем, если конкретная минута есть среди loaded_minutes.
+
+    Требования:
+      - Час должен подсвечиваться СРАЗУ после клика по часу (даже если минуту ещё не выбирали).
+      - Также подсвечиваем часы/минуты, которые уже загружены на график (loaded_minutes).
 
     Клик по минуте пишет __pending_minute_* (date/hour/minute).
     Возвращаем (date, hour, None) — минуту отдаём через pending.
@@ -66,7 +67,6 @@ def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = 
         loaded_minutes = st.session_state.get("loaded_minutes", [])  # [(date, hour, minute)]
         loaded_for_day = [(h, m) for (d, h, m) in loaded_minutes if d == selected_date]
         loaded_hours_set = {h for (h, _m) in loaded_for_day}
-        loaded_min_set_for_hour = {m for (h, m) in loaded_for_day if h == selected_hour}
 
         # Сетка часов 00..23
         st.markdown("**Час:**")
@@ -76,23 +76,29 @@ def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = 
                 h = block * 8 + i
                 if h > 23:
                     continue
-                is_loaded_hour = h in loaded_hours_set
+
+                # ВАЖНО: подсвечиваем выбранный час сразу, а также уже загруженные часы
+                is_selected_hour = (h == selected_hour)
+                is_loaded_hour = (h in loaded_hours_set)
+                primary = is_selected_hour or is_loaded_hour
+
                 label = f"{h:02d}:00"
                 key = f"{key_prefix}hour_{selected_date.isoformat()}_{h:02d}"
                 _btn(
                     cols[i],
                     label,
                     key,
-                    primary=is_loaded_hour,
+                    primary=primary,
                     on_click=_mark_hour,
                     args=(h,),
                 )
 
-        # Если пользователь кликнул час, он уже в session_state
+        # После возможного клика по часу он будет в session_state на следующем прогоне,
+        # но мы берём актуальное значение из session_state (после rerun).
         selected_hour = int(st.session_state.get("selected_minute_hour", selected_hour))
         st.caption(f"Выбранный час для минут: {selected_hour:02d}:xx")
 
-        # Пересчёт подсветки минут под новый выбранный час
+        # Минуты, уже загруженные на график за выбранный час
         loaded_min_set_for_hour = {m for (h, m) in loaded_for_day if h == selected_hour}
 
         # Сетка минут 00..59 (6x10)
