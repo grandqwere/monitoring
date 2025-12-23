@@ -9,7 +9,7 @@ HIDE_ALWAYS = {"uptime"}
 
 # Группы (по имени колонок в CSV)
 GROUPS = {
-    "P_total/S_total/Q_total": ["P_total", "S_total", "Q_total"],
+    "S_total/P_total/N_total/Q_total": ["S_total", "P_total", "N_total", "Q_total"],
     "Irms_L1–L3": ["Irms_L1", "Irms_L2", "Irms_L3"],
     "Urms_L1–L3": ["Urms_L1", "Urms_L2", "Urms_L3"],
     "U_L12/L23/L31": ["U_L1_L2", "U_L2_L3", "U_L3_L1"],
