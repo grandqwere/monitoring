@@ -90,45 +90,47 @@ def _clear_all_caches():
 # Если пользователь ещё не авторизован — показываем форму входа / демо
 if not st.session_state.get("auth_ok", False):
     st.markdown("#### Доступ")
-    # Форма логина (Enter отправляет форму)
-    with st.form("auth_form", clear_on_submit=False):
-        pwd = st.text_input(
-            "Код доступа",
-            type="password",
-            key="auth_pwd",
-            placeholder="Введите код доступа",
-        )
-        btn_login = st.form_submit_button("Войти", use_container_width=True)
-    # Кнопка «Демо-режим» — отдельным блоком ПОД формой
-    btn_demo = st.button("Демо-режим", use_container_width=True)
 
     auth_conf = dict(st.secrets.get("auth", {}))
     mapping = dict(auth_conf.get("password_to_prefix", {}))
     demo_prefix = (auth_conf.get("demo_prefix") or "").strip()
 
-    if btn_login:
-        pwd_raw = (pwd or "").strip()
+    def _do_login() -> None:
+        pwd_raw = (st.session_state.get("auth_pwd") or "").strip()
         pwd_fixed = _fix_layout_ru_to_en(pwd_raw)
         prefix = (mapping.get(pwd_raw) or mapping.get(pwd_fixed) or "").strip()
         if prefix:
+            st.session_state.pop("auth_error", None)
             st.session_state["auth_ok"] = True
             st.session_state["auth_mode"] = "password"
             st.session_state["current_prefix"] = prefix
             _clear_all_caches()
-            st.rerun()
         else:
-            st.error("Неверный пароль. Проверьте и попробуйте ещё раз.")
-            st.stop()
+            st.session_state["auth_error"] = "Неверный пароль. Проверьте и попробуйте ещё раз."
 
-    if btn_demo:
+    def _do_demo() -> None:
         if not demo_prefix:
-            st.error("Демо-папка не настроена в Secrets (auth.demo_prefix).")
-            st.stop()
+            st.session_state["auth_error"] = "Демо-папка не настроена в Secrets (auth.demo_prefix)."
+            return
+        st.session_state.pop("auth_error", None)
         st.session_state["auth_ok"] = True
         st.session_state["auth_mode"] = "demo"
         st.session_state["current_prefix"] = demo_prefix
         _clear_all_caches()
-        st.rerun()
+
+    # Enter в поле → on_change вызывает логин
+    st.text_input(
+        "Код доступа",
+        type="password",
+        key="auth_pwd",
+        placeholder="Введите код доступа",
+        on_change=_do_login,
+    )
+    st.button("Войти", use_container_width=True, on_click=_do_login, key="btn_login")
+    st.button("Демо-режим", use_container_width=True, on_click=_do_demo, key="btn_demo")
+
+    if st.session_state.get("auth_error"):
+        st.error(st.session_state["auth_error"])
 
     # Пока не вошёл — дальше приложение не рисуем
     st.stop()
