@@ -141,7 +141,8 @@ def s3_latest_available_day_all() -> date | None:
                 for cp in page.get("CommonPrefixes", []) or []:
                     p = cp.get("Prefix") or ""
                     # ожидаем .../All/YYYY.MM.DD/
-                    m = re.search(r"/All/(\d{4}\.\d{2}\.\d{2})/?$", p)
+                    # поддерживаем как "All/2025.08.25/", так и "<prefix>/All/2025.08.25/"
+                    m = re.search(r"(?:^|/)All/(\d{4}\.\d{2}\.\d{2})/?$", p)
                     if m:
                         y, mo, da = m.group(1).split(".")
                         dates.append(date(int(y), int(mo), int(da)))
@@ -151,7 +152,8 @@ def s3_latest_available_day_all() -> date | None:
 
         # 2) Fallback: сканируем ключи и вытаскиваем дату из .../All/YYYY.MM.DD/...
         if not dates:
-            rx = re.compile(r"/All/(\d{4}\.\d{2}\.\d{2})/")
+            # поддерживаем как "All/2025.08.25/...", так и "<prefix>/All/2025.08.25/..."
+            rx = re.compile(r"(?:^|/)All/(\d{4}\.\d{2}\.\d{2})/")
             for page in paginator.paginate(Bucket=bucket, Prefix=base):
                 for obj in page.get("Contents", []) or []:
                     k = obj.get("Key") or ""
