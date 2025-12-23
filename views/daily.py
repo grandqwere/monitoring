@@ -14,7 +14,7 @@ from ui.refresh import refresh_bar
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
 from ui.day import render_day_picker, day_nav_buttons
-
+from core.data_io import all_day_has_any_data, s3_latest_available_day_all
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -106,6 +106,25 @@ def _load_full_day(day: date_cls) -> tuple[pd.DataFrame, set[int]]:
 
 def render_daily_mode() -> None:
     st.markdown("### День")
+
+    if "__daily_first_entry_done" not in st.session_state:
+        st.session_state["__daily_first_entry_done"] = True
+
+        today = date_cls.today()
+        if "selected_day" not in st.session_state or st.session_state["selected_day"] is None:
+            st.session_state["selected_day"] = today
+
+        # проверяем только если сейчас выбран именно "сегодня"
+        if st.session_state.get("selected_day") == today:
+            try:
+                if not all_day_has_any_data(today):
+                    last_day = s3_latest_available_day_all()
+                    if last_day is not None and last_day != today:
+                        st.session_state["selected_day"] = last_day
+                        st.rerun()
+            except Exception:
+                # если S3 недоступен/ошибка — просто не автопереключаем
+                pass
 
     if "selected_day" not in st.session_state:
         st.session_state["selected_day"] = date_cls.today()
