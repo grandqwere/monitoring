@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 from datetime import date
 from typing import Dict
 
@@ -89,6 +90,82 @@ def read_text_s3(key: str) -> str:
             return data.decode("cp1251", errors="ignore").strip()
     except Exception:
         return ""
+
+def _current_prefix_base() -> str:
+    """Текущий префикс как 'prefix/' или ''."""
+    curr = str(st.session_state.get("current_prefix", "") or "").strip().rstrip("/")
+    return f"{curr}/" if curr else ""
+
+
+def s3_prefix_has_any_object(prefix: str) -> bool:
+    """
+    Быстрая проверка: есть ли на сервере хоть один объект под данным Prefix.
+    """
+    try:
+        client = _get_s3_client()
+        resp = client.list_objects_v2(Bucket=_bucket_name(), Prefix=prefix, MaxKeys=1)
+        # KeyCount надежнее, но бывает не у всех реализаций; подстрахуемся Contents
+        if int(resp.get("KeyCount", 0)) > 0:
+            return True
+        return bool(resp.get("Contents"))
+    except Exception:
+        return False
+
+
+def all_day_has_any_data(d: date) -> bool:
+    """
+    Есть ли хотя бы один файл в папке All/YYYY.MM.DD/ для заданного дня.
+    Учитывает демо-маппинг (через build_all_day_prefix_for).
+    """
+    from core.s3_paths import build_all_day_prefix_for
+    day_prefix = build_all_day_prefix_for(d)  # уже с trailing "/"
+    return s3_prefix_has_any_object(day_prefix)
+
+
+def s3_latest_available_day_all() -> date | None:
+    """
+    Находит самый поздний день, присутствующий в <prefix>/All/YYYY.MM.DD/
+    Возвращает date или None, если ничего не найдено.
+    """
+    try:
+        client = _get_s3_client()
+        bucket = _bucket_name()
+        base = _current_prefix_base() + "All/"
+
+        dates: list[date] = []
+
+        # 1) Пытаемся через Delimiter получить "папки" дней (CommonPrefixes)
+        paginator = client.get_paginator("list_objects_v2")
+        try:
+            for page in paginator.paginate(Bucket=bucket, Prefix=base, Delimiter="/"):
+                for cp in page.get("CommonPrefixes", []) or []:
+                    p = cp.get("Prefix") or ""
+                    # ожидаем .../All/YYYY.MM.DD/
+                    m = re.search(r"/All/(\d{4}\.\d{2}\.\d{2})/?$", p)
+                    if m:
+                        y, mo, da = m.group(1).split(".")
+                        dates.append(date(int(y), int(mo), int(da)))
+        except Exception:
+            # если Delimiter не поддержан, уйдем в fallback
+            pass
+
+        # 2) Fallback: сканируем ключи и вытаскиваем дату из .../All/YYYY.MM.DD/...
+        if not dates:
+            rx = re.compile(r"/All/(\d{4}\.\d{2}\.\d{2})/")
+            for page in paginator.paginate(Bucket=bucket, Prefix=base):
+                for obj in page.get("Contents", []) or []:
+                    k = obj.get("Key") or ""
+                    m = rx.search(k)
+                    if m:
+                        y, mo, da = m.group(1).split(".")
+                        try:
+                            dates.append(date(int(y), int(mo), int(da)))
+                        except Exception:
+                            pass
+
+        return max(dates) if dates else None
+    except Exception:
+        return None
 
 # --- (остальной код S3: head/available_hours... можно оставить без изменений, если используется) ---
 
