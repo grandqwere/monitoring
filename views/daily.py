@@ -75,15 +75,17 @@ def _get_entry(daily_cache: dict, day_key: str) -> dict:
     return entry
 
 
-def _load_full_day(day: date_cls) -> tuple[pd.DataFrame, set[int]]:
-    """Полная пересборка дня: пробуем загрузить все 24 часа."""
+def _load_full_day(day: date_cls, *, force_reload: bool = False) -> tuple[pd.DataFrame, set[int]]:
+    """Полная пересборка дня: пробуем загрузить все 24 часа.
+    force_reload=True: перечитать S3, игнорируя hour_cache.
+    """
     frames: list[pd.DataFrame] = []
     hours_present: set[int] = set()
 
     with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
         prog = st.progress(0, text="Загружаем часы: 0/24")
         for i, h in enumerate(range(24), start=1):
-            dfh = load_hour(day, h, silent=True)
+            dfh = load_hour(day, h, silent=True, force_reload=force_reload)
             if dfh is not None and not dfh.empty:
                 frames.append(dfh)
                 hours_present.add(int(h))
@@ -110,21 +112,21 @@ def render_daily_mode() -> None:
     if "__daily_first_entry_done" not in st.session_state:
         st.session_state["__daily_first_entry_done"] = True
 
+        # На первом входе: если выбранный день (по умолчанию "сегодня") отсутствует на сервере,
+        # переключаемся на последний доступный день.
         today = date_cls.today()
         if "selected_day" not in st.session_state or st.session_state["selected_day"] is None:
             st.session_state["selected_day"] = today
-
-        # проверяем только если сейчас выбран именно "сегодня"
-        if st.session_state.get("selected_day") == today:
-            try:
-                if not all_day_has_any_data(today):
-                    last_day = s3_latest_available_day_all()
-                    if last_day is not None and last_day != today:
-                        st.session_state["selected_day"] = last_day
-                        st.rerun()
-            except Exception:
-                # если S3 недоступен/ошибка — просто не автопереключаем
-                pass
+        try:
+            sel = st.session_state.get("selected_day")
+            if sel and (not all_day_has_any_data(sel)):
+                last_day = s3_latest_available_day_all()
+                if last_day is not None and last_day != sel:
+                    st.session_state["selected_day"] = last_day
+                    st.rerun()
+        except Exception:
+            # если S3 недоступен/ошибка — просто не автопереключаем
+            pass
 
     if "selected_day" not in st.session_state:
         st.session_state["selected_day"] = date_cls.today()
@@ -170,13 +172,12 @@ def render_daily_mode() -> None:
         st.caption("Загружено часов: 24 из 24")
 
     if st.button("↻ Обновить все графики", use_container_width=True, key="btn_refresh_all_daily"):
-        if loaded_cnt < 24:
-            # ВАЖНО: пересобираем ВЕСЬ день заново, чтобы подтянуть появившиеся файлы
-            df_day_new, hours_present_new = _load_full_day(day)
-            entry["df"] = df_day_new
-            entry["hours_present"] = hours_present_new
-            daily_cache[day_key] = entry
-        # В любом случае — просто перерисовка (как было)
+        # ВАЖНО: перечитываем S3, игнорируя hour_cache — подтягиваем появившиеся/обновлённые файлы
+        df_day_new, hours_present_new = _load_full_day(day, force_reload=True)
+        entry["df"] = df_day_new
+        entry["hours_present"] = hours_present_new
+        daily_cache[day_key] = entry
+
         st.session_state["refresh_daily_all"] += 1
         st.rerun()
 
@@ -230,7 +231,7 @@ def render_daily_mode() -> None:
         list(df_mean.columns),
         default_main,
         key_prefix="daily__",
-        strict=False,
+        strict=True,
     )
 
     norm_token = "__".join(sorted(separate_set)) if separate_set else "none"
