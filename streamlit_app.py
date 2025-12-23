@@ -17,7 +17,50 @@ state.init_once()
 init_hour_state()
 init_minute_state()  # NEW
 
-# (Заголовок теперь рисуем ПОСЛЕ входа — из description.txt)
+# -------------------- Автоисправление раскладки пароля RU -> EN --------------------
+_RU_TO_EN = str.maketrans({
+    "ё": "`", "Ё": "~",
+    "й": "q", "Й": "Q",
+    "ц": "w", "Ц": "W",
+    "у": "e", "У": "E",
+    "к": "r", "К": "R",
+    "е": "t", "Е": "T",
+    "н": "y", "Н": "Y",
+    "г": "u", "Г": "U",
+    "ш": "i", "Ш": "I",
+    "щ": "o", "Щ": "O",
+    "з": "p", "З": "P",
+    "х": "[", "Х": "{",
+    "ъ": "]", "Ъ": "}",
+    "ф": "a", "Ф": "A",
+    "ы": "s", "Ы": "S",
+    "в": "d", "В": "D",
+    "а": "f", "А": "F",
+    "п": "g", "П": "G",
+    "р": "h", "Р": "H",
+    "о": "j", "О": "J",
+    "л": "k", "Л": "K",
+    "д": "l", "Д": "L",
+    "ж": ";", "Ж": ":",
+    "э": "'", "Э": "\"",
+    "я": "z", "Я": "Z",
+    "ч": "x", "Ч": "X",
+    "с": "c", "С": "C",
+    "м": "v", "М": "V",
+    "и": "b", "И": "B",
+    "т": "n", "Т": "N",
+    "ь": "m", "Ь": "M",
+    "б": ",", "Б": "<",
+    "ю": ".", "Ю": ">",
+})
+
+def _fix_layout_ru_to_en(s: str) -> str:
+    """Если пароль набран в RU раскладке, преобразуем в EN по клавиатурному соответствию."""
+    if not s:
+        return s
+    return s.translate(_RU_TO_EN)
+
+ (Заголовок теперь рисуем ПОСЛЕ входа — из description.txt)
 
 # -------------------- ПРОСТОЙ ДОСТУП: пароль / демо --------------------
 # Секреты: [auth].demo_prefix и [auth].password_to_prefix (см. Secrets в Streamlit Cloud)
@@ -63,7 +106,9 @@ if not st.session_state.get("auth_ok", False):
     demo_prefix = (auth_conf.get("demo_prefix") or "").strip()
 
     if btn_login:
-        prefix = (mapping.get(pwd) or "").strip()
+        pwd_raw = (pwd or "").strip()
+        pwd_fixed = _fix_layout_ru_to_en(pwd_raw)
+        prefix = (mapping.get(pwd_raw) or mapping.get(pwd_fixed) or "").strip()
         if prefix:
             st.session_state["auth_ok"] = True
             st.session_state["auth_mode"] = "password"
