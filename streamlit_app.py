@@ -60,7 +60,7 @@ def _fix_layout_ru_to_en(s: str) -> str:
         return s
     return s.translate(_RU_TO_EN)
 
- (Заголовок теперь рисуем ПОСЛЕ входа — из description.txt)
+# (Заголовок теперь рисуем ПОСЛЕ входа — из description.txt)
 
 # -------------------- ПРОСТОЙ ДОСТУП: пароль / демо --------------------
 # Секреты: [auth].demo_prefix и [auth].password_to_prefix (см. Secrets в Streamlit Cloud)
