@@ -3,6 +3,11 @@ from __future__ import annotations
 
 import streamlit as st
 
+# ВАЖНО: set_page_config должен быть самым первым Streamlit-вызовом.
+# Иначе модули с @st.cache_* / st.* на уровне импорта вызывают Streamlit раньше.
+st.set_page_config(page_title="Мониторинг электрических параметров", layout="wide")
+
+# Импорты проекта — ТОЛЬКО после set_page_config
 from core import state
 from views.daily import render_daily_mode
 from views.hourly import render_hourly_mode
@@ -11,8 +16,6 @@ from core.hour_loader import init_hour_state
 from core.minute_loader import init_minute_state  # NEW
 from core.data_io import read_text_s3
 from core.s3_paths import build_root_key
-
-st.set_page_config(page_title="Мониторинг электрических параметров", layout="wide")
 state.init_once()
 init_hour_state()
 init_minute_state()  # NEW
