@@ -40,14 +40,14 @@ def _reassign_index_date_keep_time(df: pd.DataFrame, new_day: date_cls) -> pd.Da
     out.index = new_idx
     return out.sort_index()
 
-def load_hour(d: date_cls, h: int, *, silent: bool = True) -> pd.DataFrame | None:
+def load_hour(d: date_cls, h: int, *, silent: bool = True, force_reload: bool = False) -> pd.DataFrame | None:
     """Загрузка одного часа с кэшированием.
     При отсутствии файла возвращает None. Сообщения интерфейсу выводим на уровне view.
     silent зарезервирован на случай будущего поведения, по умолчанию ничего не печатаем.
     """
     k = _key_for(d, h)
     cache = st.session_state["hour_cache"]
-    if k in cache:
+    if (not force_reload) and (k in cache):
         return cache[k]
 
     # Для демо-режима («auth_mode == demo») читаем август 2025 того же дня/часа,
@@ -62,6 +62,7 @@ def load_hour(d: date_cls, h: int, *, silent: bool = True) -> pd.DataFrame | Non
         # чтобы ось X соответствовала его выбору (месяц/год).
         if st.session_state.get("auth_mode") == "demo":
             df = _reassign_index_date_keep_time(df, d)
+        # force_reload=True должен обновлять кэш актуальными данными
         cache[k] = df
         return df
     except Exception:
