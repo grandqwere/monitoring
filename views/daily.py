@@ -146,7 +146,7 @@ def render_daily_mode() -> None:
     hours_present_now = set(entry.get("hours_present") or set())
     loaded_cnt = len(hours_present_now)
     if loaded_cnt < 24:
-        st.caption(f"За день загружено часов: {loaded_cnt}/24. Чтобы добавить часы, нажмите кнопку 'Обновить все графики.")
+        st.caption(f"За день загружено часов: {loaded_cnt}/24. Чтобы добавить часы, нажмите кнопку 'Обновить все графики.'")
     else:
         st.caption("За день загружены все 24 часа. Обновление перерисует графики без повторной загрузки данных.")
 
