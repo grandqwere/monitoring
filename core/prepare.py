@@ -52,8 +52,16 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             pass
 
+    # Удаляем строки, где время не распарсилось (NaT),
+    # иначе ресемплинг/агрегация может вести себя некорректно.
+    mask = ts.notna()
+    if mask.sum() == 0:
+        return df.head(0)
+    df = df.loc[mask].copy()
+    ts = ts.loc[mask]
+
     df = df.drop(columns=[time_col])
-    df.index = ts
+    df.index = ts.values
     df = df.sort_index()
 
     # 2) убрать uptime
