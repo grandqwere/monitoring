@@ -111,6 +111,16 @@ def build_all_key_for(d: date, hour: int) -> str:
     subpath = f"All/{day_folder}"
     return build_key_for(d, hour, subdir=subpath)
 
+def build_all_day_prefix_for(d: date) -> str:
+    """
+    Префикс папки дня в All/:
+      <prefix>/All/YYYY.MM.DD/
+    Учитывает демо-маппинг даты (_map_day_for_storage).
+    """
+    d_eff = _map_day_for_storage(d)
+    day_folder = f"{d_eff.year:04d}.{d_eff.month:02d}.{d_eff.day:02d}"
+    current_prefix = st.session_state.get("current_prefix", "")
+    return _join_prefix(current_prefix, f"All/{day_folder}")
 
 def build_root_key(filename: str) -> str:
     """
