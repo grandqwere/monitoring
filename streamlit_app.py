@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-# ВАЖНО: set_page_config должен быть самым первым Streamlit-вызовом.
-# Иначе модули с @st.cache_* / st.* на уровне импорта вызывают Streamlit раньше.
 st.set_page_config(page_title="Мониторинг электрических параметров", layout="wide")
 
 # Импорты проекта — ТОЛЬКО после set_page_config
