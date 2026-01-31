@@ -1,14 +1,13 @@
-name: Recompute statistics (daily)
+name: Recompute stats (daily)
 
 on:
   workflow_dispatch:
   schedule:
-    # GitHub Actions schedule uses UTC time
-    # Avoid minute 00 to reduce delays at the top of the hour
+    # cron in GitHub Actions is UTC
     - cron: "17 3 * * *"
 
 concurrency:
-  group: recompute-stats-daily
+  group: recompute-stats
   cancel-in-progress: false
 
 permissions:
@@ -36,7 +35,6 @@ jobs:
 
       - name: Run recompute_stats.py
         env:
-          # Your Streamlit-style config, passed from GitHub Secrets
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
           S3_REGION: ${{ secrets.S3_REGION }}
           S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
@@ -44,12 +42,6 @@ jobs:
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
           S3_PATH_STYLE: ${{ secrets.S3_PATH_STYLE }}
           S3_SIGNATURE_VERSION: ${{ secrets.S3_SIGNATURE_VERSION }}
-
-          # Also provide standard AWS env names (harmless if your script ignores them)
-          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ secrets.S3_REGION }}
-
           PYTHONUNBUFFERED: "1"
         run: |
           python tools/recompute_stats.py
