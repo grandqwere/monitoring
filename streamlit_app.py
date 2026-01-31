@@ -18,7 +18,7 @@ state.init_once()
 init_hour_state()
 init_minute_state()  # NEW
 
-# -------------------- Автоисправление раскладки пароля RU -> EN --------------------
+# -------------------- Автоисправление раскладки пароля RU <-> EN --------------------
 _RU_TO_EN = str.maketrans({
     "ё": "`", "Ё": "~",
     "й": "q", "Й": "Q",
@@ -55,11 +55,19 @@ _RU_TO_EN = str.maketrans({
     "ю": ".", "Ю": ">",
 })
 
+_EN_TO_RU = str.maketrans({v: chr(k) for k, v in _RU_TO_EN.items()})
+
 def _fix_layout_ru_to_en(s: str) -> str:
     """Если пароль набран в RU раскладке, преобразуем в EN по клавиатурному соответствию."""
     if not s:
         return s
     return s.translate(_RU_TO_EN)
+
+def _fix_layout_en_to_ru(s: str) -> str:
+    """Если пароль набран в EN раскладке, преобразуем в RU по клавиатурному соответствию."""
+    if not s:
+        return s
+    return s.translate(_EN_TO_RU)
 
 # (Заголовок теперь рисуем ПОСЛЕ входа — из description.txt)
 
@@ -98,7 +106,8 @@ if not st.session_state.get("auth_ok", False):
     def _do_login() -> None:
         pwd_raw = (st.session_state.get("auth_pwd") or "").strip()
         pwd_fixed = _fix_layout_ru_to_en(pwd_raw)
-        prefix = (mapping.get(pwd_raw) or mapping.get(pwd_fixed) or "").strip()
+        pwd_fixed_rev = _fix_layout_en_to_ru(pwd_raw)
+        prefix = (mapping.get(pwd_raw) or mapping.get(pwd_fixed) or mapping.get(pwd_fixed_rev) or "").strip()
         if prefix:
             st.session_state.pop("auth_error", None)
             st.session_state["auth_ok"] = True
