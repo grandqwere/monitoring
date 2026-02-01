@@ -1,19 +1,11 @@
-# core/plotting.py
 from __future__ import annotations
-
 from typing import List, Set, Dict
 from math import ceil
-
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.colors import qualitative as qual
 
-from core.config import (
-    MAX_POINTS_MAIN,
-    MAX_POINTS_GROUP,
-    MAX_POINTS_MINUTE_MAIN,
-    MAX_POINTS_MINUTE_GROUP,
-)
+from core.config import MAX_POINTS_MAIN, MAX_POINTS_GROUP
 
 
 def _stride(df: pd.DataFrame, max_points: int) -> pd.DataFrame:
@@ -95,19 +87,16 @@ def main_chart(
     for c in base_series:
         fig.add_trace(
             go.Scattergl(
-                x=df_plot.index,
-                y=df_plot[c],
-                mode="lines",
-                name=c,
+                x=df_plot.index, y=df_plot[c], mode="lines", name=c,
                 line=dict(color=color_map[c]),
-                hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
+                hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>",
             )
         )
 
     # Доп. ЛЕВЫЕ оси
     pos_start = 0.02
-    pos_step = 0.05
-    pos_max = 0.95
+    pos_step  = 0.05
+    pos_max   = 0.95
 
     axis_idx = 1
     for j, c in enumerate([s for s in present if s in separate_axes]):
@@ -116,30 +105,23 @@ def main_chart(
         yref = f"y{axis_idx}"
         pos_val = min(pos_max, pos_start + j * pos_step)
 
-        fig.update_layout(
-            **{
-                yaxis_name: dict(
-                    overlaying="y",
-                    anchor="free",
-                    side="left",
-                    position=pos_val,
-                    showgrid=False,
-                    zeroline=False,
-                    title=None,
-                    tickfont=dict(color=color_map[c]),
-                )
-            }
-        )
+        fig.update_layout(**{
+            yaxis_name: dict(
+                overlaying="y",
+                side="left",
+                position=pos_val,
+                showgrid=False,
+                zeroline=False,
+                title=None,
+                tickfont=dict(color=color_map[c]),
+            )
+        })
 
         fig.add_trace(
             go.Scattergl(
-                x=df_plot.index,
-                y=df_plot[c],
-                mode="lines",
-                name=c,
-                yaxis=yref,
+                x=df_plot.index, y=df_plot[c], mode="lines", name=c, yaxis=yref,
                 line=dict(color=color_map[c]),
-                hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
+                hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>",
             )
         )
 
@@ -149,13 +131,8 @@ def main_chart(
         for y in (0.2, 0.4, 0.6, 0.8):
             shapes.append(
                 dict(
-                    type="line",
-                    xref="paper",
-                    yref="paper",
-                    x0=0,
-                    x1=1,
-                    y0=y,
-                    y1=y,
+                    type="line", xref="paper", yref="paper",
+                    x0=0, x1=1, y0=y, y1=y,
                     line=dict(color=params["grid"], width=1, dash="dot"),
                     layer="below",
                 )
@@ -170,8 +147,6 @@ def group_panel(
     cols: List[str],
     height: int,
     theme_base: str | None = None,
-    *,
-    max_points: int | None = None,
 ) -> go.Figure:
     """Группа: одна левая ось, без подписей; легенда снизу."""
     params = _theme_params(theme_base)
@@ -202,108 +177,13 @@ def group_panel(
     if not present:
         return fig
 
-    mp = MAX_POINTS_GROUP if max_points is None else int(max_points)
-    df_plot = _stride(df[present], mp)
+    df_plot = _stride(df[present], MAX_POINTS_GROUP)
 
     for c in present:
         fig.add_trace(
             go.Scattergl(
-                x=df_plot.index,
-                y=df_plot[c],
-                mode="lines",
-                name=c,
-                hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
-            )
-        )
-
-    return fig
-
-
-def minutely_summary_chart(
-    df: pd.DataFrame,
-    height: int,
-    theme_base: str | None = None,
-    *,
-    u_prefix: str = "Upeak_",
-    i_prefix: str = "Ipeak_",
-) -> go.Figure:
-    """
-    Минутный сводный (Ipeak+Upeak):
-      - Ipeak_* на ЛЕВОЙ оси (y),
-      - Upeak_* на ПРАВОЙ оси (y2),
-      - рассинхрон допускается (df уже объединён outer-join'ом),
-      - лимиты точек отдельные (MAX_POINTS_MINUTE_MAIN).
-    """
-    params = _theme_params(theme_base)
-
-    fig = go.Figure()
-    fig.update_layout(
-        template=params["template"],
-        autosize=True,
-        height=height,
-        margin=dict(t=30, r=55, b=90, l=55),
-        plot_bgcolor=params["bg"],
-        paper_bgcolor=params["bg"],
-        xaxis=dict(title=None),
-        yaxis=dict(title=None, showgrid=True, gridcolor=params["grid"]),
-        yaxis2=dict(
-            title=None,
-            overlaying="y",
-            side="right",
-            showgrid=False,
-            zeroline=False,
-        ),
-        legend=dict(
-            orientation="h",
-            yanchor="top",
-            y=-0.15,
-            x=0.5,
-            xanchor="center",
-            title=None,
-        ),
-        colorway=list(params["colorway"]),
-    )
-
-    if df is None or df.empty or not isinstance(df.index, pd.DatetimeIndex):
-        return fig
-
-    i_cols = [c for c in df.columns if str(c).startswith(i_prefix)]
-    u_cols = [c for c in df.columns if str(c).startswith(u_prefix)]
-    if not i_cols and not u_cols:
-        return fig
-
-    # порядок: сначала I (слева), затем U (справа) — стабильное назначение цветов
-    ordered = i_cols + u_cols
-    df_plot = _stride(df[ordered], MAX_POINTS_MINUTE_MAIN)
-
-    cw = list(params["colorway"])
-    color_map: Dict[str, str] = {c: cw[i % len(cw)] for i, c in enumerate(ordered)}
-
-    # Ipeak -> левая ось
-    for c in i_cols:
-        fig.add_trace(
-            go.Scattergl(
-                x=df_plot.index,
-                y=df_plot[c],
-                mode="lines",
-                name=c,
-                yaxis="y",
-                line=dict(color=color_map[c]),
-                hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
-            )
-        )
-
-    # Upeak -> правая ось
-    for c in u_cols:
-        fig.add_trace(
-            go.Scattergl(
-                x=df_plot.index,
-                y=df_plot[c],
-                mode="lines",
-                name=c,
-                yaxis="y2",
-                line=dict(color=color_map[c]),
-                hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
+                x=df_plot.index, y=df_plot[c], mode="lines", name=c,
+                hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>",
             )
         )
 
@@ -356,16 +236,10 @@ def daily_main_chart(
     # Базовые серии (mean) на общей оси
     base_series = [c for c in present if c not in separate_axes]
     for c in base_series:
-        fig.add_trace(
-            go.Scattergl(
-                x=df_mean.index,
-                y=df_mean[c],
-                mode="lines",
-                name=f"{c}",
-                line=dict(color=color_map[c]),
-                hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
-            )
-        )
+        fig.add_trace(go.Scattergl(
+            x=df_mean.index, y=df_mean[c], mode="lines", name=f"{c}",
+            line=dict(color=color_map[c]), hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"
+        ))
 
     # Дополнительные оси слева
     pos_start, pos_step, pos_max = 0.02, 0.05, 0.95
@@ -373,48 +247,108 @@ def daily_main_chart(
     for j, c in enumerate([s for s in present if s in separate_axes]):
         axis_idx += 1
         yaxis_name, yref = f"yaxis{axis_idx}", f"y{axis_idx}"
-        fig.update_layout(
-            **{
-                yaxis_name: dict(
-                    overlaying="y",
-                    anchor="free",
-                    side="left",
-                    position=min(pos_max, pos_start + j * pos_step),
-                    showgrid=False,
-                    zeroline=False,
-                    title=None,
-                    tickfont=dict(color=color_map[c]),
-                )
-            }
-        )
-        fig.add_trace(
-            go.Scattergl(
-                x=df_mean.index,
-                y=df_mean[c],
-                mode="lines",
-                name=f"{c}",
-                yaxis=yref,
-                line=dict(color=color_map[c]),
-                hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
-            )
-        )
+        fig.update_layout(**{yaxis_name: dict(
+            overlaying="y", side="left", position=min(pos_max, pos_start + j*pos_step),
+            showgrid=False, zeroline=False, title=None, tickfont=dict(color=color_map[c]),
+        )})
+        fig.add_trace(go.Scattergl(
+            x=df_mean.index, y=df_mean[c], mode="lines", name=f"{c}",
+            yaxis=yref, line=dict(color=color_map[c]),
+            hovertemplate="%{x}<br>"+c+": %{y}<extra></extra>"
+        ))
+
+    # По умолчанию p95/extrema выключены — параметры оставлены на будущее.
 
     if len(separate_axes) > 0:
         shapes = []
         for y in (0.2, 0.4, 0.6, 0.8):
-            shapes.append(
-                dict(
-                    type="line",
-                    xref="paper",
-                    yref="paper",
-                    x0=0,
-                    x1=1,
-                    y0=y,
-                    y1=y,
-                    line=dict(color=params["grid"], width=1, dash="dot"),
-                    layer="below",
-                )
-            )
+            shapes.append(dict(type="line", xref="paper", yref="paper", x0=0, x1=1, y0=y, y1=y,
+                               line=dict(color=params["grid"], width=1, dash="dot"), layer="below"))
         fig.update_layout(shapes=shapes)
+
+    return fig
+
+
+def percentile_band_chart(
+    df: pd.DataFrame,
+    percentile_cols: Dict[float, str],
+    selected: List[float],
+    height: int,
+    theme_base: str | None = None,
+) -> go.Figure:
+    """
+    График перцентилей:
+      - серый диапазон между крайними перцентилями,
+      - линии выбранных перцентилей.
+    """
+    params = _theme_params(theme_base)
+    fig = go.Figure()
+    fig.update_layout(
+        template=params["template"],
+        autosize=True,
+        height=height,
+        margin=dict(t=26, r=20, b=80, l=55),
+        plot_bgcolor=params["bg"],
+        paper_bgcolor=params["bg"],
+        xaxis=dict(title=None, tickformat="%H:%M"),
+        yaxis=dict(title=None, showgrid=True, gridcolor=params["grid"]),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.12,
+            x=0.5,
+            xanchor="center",
+            title=None,
+        ),
+        colorway=list(params["colorway"]),
+    )
+
+    if df is None or df.empty or not percentile_cols:
+        return fig
+
+    df_plot = df.sort_index()
+    vals = sorted(percentile_cols.keys())
+
+    if len(vals) >= 2:
+        low_col = percentile_cols[vals[0]]
+        high_col = percentile_cols[vals[-1]]
+        band_color = "rgba(140,140,140,0.25)" if params["template"] == "plotly_white" else "rgba(200,200,200,0.18)"
+        fig.add_trace(
+            go.Scattergl(
+                x=df_plot.index,
+                y=df_plot[low_col],
+                mode="lines",
+                line=dict(width=0, color=band_color),
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+        fig.add_trace(
+            go.Scattergl(
+                x=df_plot.index,
+                y=df_plot[high_col],
+                mode="lines",
+                line=dict(width=0, color=band_color),
+                fill="tonexty",
+                fillcolor=band_color,
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+
+    for p in selected:
+        if p not in percentile_cols:
+            continue
+        col = percentile_cols[p]
+        fig.add_trace(
+            go.Scattergl(
+                x=df_plot.index,
+                y=df_plot[col],
+                mode="lines",
+                name=f"{p:g}%",
+                hovertemplate="%{x}<br>"+f"{p:g}%: %{y}"+"<extra></extra>",
+            )
+        )
 
     return fig
