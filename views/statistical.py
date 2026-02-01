@@ -13,7 +13,7 @@ import streamlit as st
 from core.data_io import read_text_s3
 from core.s3_paths import build_root_key
 
-# Высота графика
+
 _STAT_HEIGHT = 560
 
 # Фиксированные цвета (не зависят от порядка отображения трасс)
@@ -269,12 +269,13 @@ def _make_figure(
             if v <= 0 or not np.isfinite(v):
                 continue
             color = _THRESHOLDS[i - 1][1] if 1 <= i <= len(_THRESHOLDS) else _LINE_COLORS.get("threshold")
+            vv = int(v)
             fig.add_trace(
                 go.Scatter(
                     x=df.index,
-                    y=[v] * len(df.index),
+                    y=[vv] * len(df.index),
                     mode="lines",
-                    name=f"Мощность: {v:g} кВт",
+                    name=f"Мощность: {vv} кВт",
                     showlegend=False,
                     line=dict(width=3, dash="dash", color=color),
                 )
@@ -328,7 +329,50 @@ def render_statistical_mode() -> None:
         unsafe_allow_html=True,
     )
 
-    # Чекбоксы (общие для обоих графиков)
+    # 5 чекбоксов + числовые поля для горизонтальных линий "Мощность" (кВт)
+    thresholds: List[Tuple[int, int]] = []
+    threshold_values: List[int] = []
+    for i, (emoji, _color) in enumerate(_THRESHOLDS, start=1):
+        col_cb, col_inp, _sp = st.columns([1.6, 1.1, 5.3])
+        with col_cb:
+            en = st.checkbox(f"{emoji} Мощность (кВт)", value=False, key=f"stat_thr_en_{i}")
+        with col_inp:
+            v = st.number_input(
+                f"thr_{i}_kw",
+                min_value=0,
+                value=0,
+                step=1,
+                key=f"stat_thr_val_{i}",
+                label_visibility="collapsed",
+            )
+        try:
+            vv = int(v)
+        except Exception:
+            vv = 0
+        if en and vv > 0:
+            thresholds.append((i, vv))
+            threshold_values.append(vv)
+
+    # Увеличение мощности объекта на (кВт): поднимаем все значения из CSV на эту величину
+    col_lbl, col_inp, _sp = st.columns([1.6, 1.1, 5.3])
+    with col_lbl:
+        st.markdown("**Увеличить мощность объекта на (кВт):**")
+    with col_inp:
+        shift_kw = st.number_input(
+            "shift_kw",
+            min_value=0,
+            value=0,
+            step=1,
+            key="stat_shift_kw",
+            label_visibility="collapsed",
+        )
+
+    try:
+        shift_kw_int = int(shift_kw)
+    except Exception:
+        shift_kw_int = 0
+
+    # Чекбоксы линий (общие для обоих графиков) — ближе к графикам
     c0, c1, c2, c3, c4 = st.columns(5)
     with c0:
         cb_med = st.checkbox("Медиана", value=False, key="stat_cb_median")
@@ -350,30 +394,6 @@ def render_statistical_mode() -> None:
 
     show_median = bool(cb_med)
 
-    # 5 чекбоксов + числовые поля для горизонтальных линий "Мощность" (кВт)
-    thresholds: List[Tuple[int, float]] = []
-    threshold_values: List[float] = []
-    for i, (emoji, _color) in enumerate(_THRESHOLDS, start=1):
-        col_cb, col_inp, _sp = st.columns([1.25, 0.6, 6.0])
-        with col_cb:
-            en = st.checkbox(f"{emoji} Мощность (кВт)", value=False, key=f"stat_thr_en_{i}")
-        with col_inp:
-            v = st.number_input(
-                f"thr_{i}_kw",
-                min_value=0.0,
-                value=0.0,
-                step=1.0,
-                key=f"stat_thr_val_{i}",
-                label_visibility="collapsed",
-            )
-        try:
-            vv = float(v)
-        except Exception:
-            vv = 0.0
-        if en and vv > 0 and np.isfinite(vv):
-            thresholds.append((i, vv))
-            threshold_values.append(vv)
-
     state = _read_stat_state()
     agg_minutes = state.get("agg_minutes", None)
     try:
@@ -387,6 +407,15 @@ def render_statistical_mode() -> None:
 
     df_weekday = _read_stat_csv("weekday.csv")
     df_weekend = _read_stat_csv("weekend.csv")
+
+    # Сдвиг значений из CSV на введённую величину (кВт)
+    if shift_kw_int != 0:
+        for df in (df_weekday, df_weekend):
+            if df is None or df.empty:
+                continue
+            for c in df.columns:
+                if pd.api.types.is_numeric_dtype(df[c]):
+                    df[c] = df[c] + float(shift_kw_int)
 
     shown = 0
     y_max = _compute_global_y_max(
