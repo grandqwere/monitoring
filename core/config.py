@@ -1,3 +1,4 @@
+# core/config.py
 from __future__ import annotations
 
 # Колонка времени во входных CSV
@@ -8,7 +9,7 @@ HIDE_ALWAYS = {"uptime"}
 
 # Группы (по имени колонок в CSV)
 GROUPS = {
-    "P_total/S_total/Q_total": ["P_total", "S_total", "Q_total"],
+    "S_total/P_total/N_total/Q_total": ["S_total", "P_total", "N_total", "Q_total"],
     "Irms_L1–L3": ["Irms_L1", "Irms_L2", "Irms_L3"],
     "Urms_L1–L3": ["Urms_L1", "Urms_L2", "Urms_L3"],
     "U_L12/L23/L31": ["U_L1_L2", "U_L2_L3", "U_L3_L1"],
@@ -17,15 +18,18 @@ GROUPS = {
 }
 
 # Что показывать на сводном графике по умолчанию
-DEFAULT_PRESET = ["P_total", "S_total", "Q_total"]
+DEFAULT_PRESET = ["S_total", "P_total", "N_total", "Q_total"]
 
-# Лимиты точек (прореживание)
+# Лимиты точек (прореживание) — часовые/суточные
 MAX_POINTS_MAIN = 5000
 MAX_POINTS_GROUP = 5000
 
+# Лимиты точек (прореживание) — минутные (Ipeak/Upeak), 2 минуты ~ 6000 точек
+MAX_POINTS_MINUTE_MAIN = 20000
+MAX_POINTS_MINUTE_GROUP = 20000
+
 # Фиксированная высота всех графиков (px)
 PLOT_HEIGHT = 500
-PLOT_HEIGHT_STAT = 600
 
 # Маппинг меток осей (используется ui.axis_selector)
 AXIS_LABELS = {
