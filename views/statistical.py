@@ -5,6 +5,7 @@ import io
 import json
 from typing import Dict, List, Tuple
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -120,7 +121,7 @@ def _compute_y_max(df: pd.DataFrame, cols: List[str]) -> float:
             except Exception:
                 pass
     y_max = max(vals) if vals else 1.0
-    if not pd.isfinite(y_max) or y_max <= 0:
+    if not np.isfinite(y_max) or y_max <= 0:
         y_max = 1.0
     return y_max
 
