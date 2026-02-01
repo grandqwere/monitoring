@@ -13,7 +13,7 @@ import streamlit as st
 from core.data_io import read_text_s3
 from core.s3_paths import build_root_key
 
-# Высота графика
+
 _STAT_HEIGHT = 560
 
 # Фиксированные цвета (не зависят от порядка отображения трасс)
@@ -25,6 +25,15 @@ _LINE_COLORS: Dict[str, str] = {
     "median": "#2ca02c",
     "threshold": "#7f7f7f",
 }
+
+# 5 линий "Мощность" (фиксированные разные цвета, совпадают с маркерами в чекбоксах)
+_THRESHOLDS: List[Tuple[str, str]] = [
+    ("🔴", "#d62728"),
+    ("🔵", "#1f77b4"),
+    ("🟠", "#ff7f0e"),
+    ("🟣", "#9467bd"),
+    ("🟤", "#8c564b"),
+]
 
 # Вложенные серые области для интервалов (внешние светлее, внутренние темнее)
 _FILL_COLORS: Dict[str, str] = {
@@ -116,13 +125,14 @@ def _read_stat_csv(filename: str) -> pd.DataFrame | None:
 
 
 def _iter_enabled_intervals_for_fill(enabled: Dict[str, bool]) -> List[Tuple[str, str, str]]:
-    """Интервалы для вложенных заливок: от самого широкого к самому узкому."""
-    if not any(enabled.values()):
-        return []
+    """Интервалы для вложенных заливок: от самого широкого к самому узкому.
+
+    Серые области показываются всегда (не зависят от чекбоксов линий).
+    """
     label_to_bounds = {lbl: (low, high) for lbl, low, high in _INTERVALS}
     out: List[Tuple[str, str, str]] = []
     for lbl in _FILL_ORDER:
-        if enabled.get(lbl, False) and lbl in label_to_bounds:
+        if lbl in label_to_bounds:
             low, high = label_to_bounds[lbl]
             out.append((lbl, low, high))
     return out
@@ -151,12 +161,11 @@ def _compute_global_y_max(
     show_median: bool,
     threshold_values: List[float],
 ) -> float:
-    cols: List[str] = []
+    # Серые области показываются всегда, поэтому масштаб Y берём по верхним границам всех интервалов
+    # (плюс медиана/пороги, если они включены).
+    cols: List[str] = [high_c for _lbl, _low_c, high_c in _INTERVALS]
     if show_median:
         cols.append("P50")
-    for lbl, _low_c, high_c in _INTERVALS:
-        if enabled.get(lbl, False):
-            cols.append(high_c)
 
     mx = 0.0
     for df in dfs:
@@ -188,7 +197,7 @@ def _make_figure(
 
     fig = go.Figure()
 
-    # Вложенные заливки интервалов (если выбран хотя бы один интервал)
+    # Вложенные серые заливки интервалов (показываются всегда)
     for lbl, low_c, high_c in _iter_enabled_intervals_for_fill(enabled):
         if low_c in df.columns and high_c in df.columns:
             fig.add_trace(
@@ -259,13 +268,15 @@ def _make_figure(
         for i, v in thresholds:
             if v <= 0 or not np.isfinite(v):
                 continue
+            color = _THRESHOLDS[i - 1][1] if 1 <= i <= len(_THRESHOLDS) else _LINE_COLORS.get("threshold")
             fig.add_trace(
                 go.Scatter(
                     x=df.index,
                     y=[v] * len(df.index),
                     mode="lines",
-                    name=f"Линия {i}: {v:g} кВт",
-                    line=dict(width=1, dash="dash", color=_LINE_COLORS.get("threshold")),
+                    name=f"Мощность: {v:g} кВт",
+                    showlegend=False,
+                    line=dict(width=3, dash="dash", color=color),
                 )
             )
 
@@ -307,14 +318,24 @@ def _make_figure(
 def render_statistical_mode() -> None:
     st.markdown("### Статистические")
 
+    # Минимальная дистанция между графиками (только для этой вкладки)
+    st.markdown(
+        """
+        <style>
+        div[data-testid='stPlotlyChart'] { margin-top: 0rem; margin-bottom: 0rem; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # Чекбоксы (общие для обоих графиков)
     c0, c1, c2, c3, c4 = st.columns(5)
     with c0:
-        cb_med = st.checkbox("Медиана", value=True, key="stat_cb_median")
+        cb_med = st.checkbox("Медиана", value=False, key="stat_cb_median")
     with c1:
         cb_50 = st.checkbox("50%", value=False, key="stat_cb_50")
     with c2:
-        cb_90 = st.checkbox("90%", value=True, key="stat_cb_90")
+        cb_90 = st.checkbox("90%", value=False, key="stat_cb_90")
     with c3:
         cb_95 = st.checkbox("95%", value=False, key="stat_cb_95")
     with c4:
@@ -329,20 +350,21 @@ def render_statistical_mode() -> None:
 
     show_median = bool(cb_med)
 
-    # 5 чекбоксов + числовые поля для горизонтальных линий (кВт)
+    # 5 чекбоксов + числовые поля для горизонтальных линий "Мощность" (кВт)
     thresholds: List[Tuple[int, float]] = []
     threshold_values: List[float] = []
-    for i in range(1, 6):
-        a, b = st.columns([0.25, 0.75])
-        with a:
-            en = st.checkbox(f"Линия {i}", value=False, key=f"stat_thr_en_{i}")
-        with b:
+    for i, (emoji, _color) in enumerate(_THRESHOLDS, start=1):
+        col_cb, col_inp, _sp = st.columns([1.25, 0.6, 6.0])
+        with col_cb:
+            en = st.checkbox(f"{emoji} Мощность (кВт)", value=False, key=f"stat_thr_en_{i}")
+        with col_inp:
             v = st.number_input(
-                f"Линия {i} (кВт)",
+                f"thr_{i}_kw",
                 min_value=0.0,
                 value=0.0,
                 step=1.0,
                 key=f"stat_thr_val_{i}",
+                label_visibility="collapsed",
             )
         try:
             vv = float(v)
