@@ -13,7 +13,7 @@ import streamlit as st
 from core.data_io import read_text_s3
 from core.s3_paths import build_root_key
 
-
+# Высота графика
 _STAT_HEIGHT = 560
 
 # Фиксированные цвета (не зависят от порядка отображения трасс)
