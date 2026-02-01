@@ -427,11 +427,10 @@ def _build_day_series(
 
     day_start = day_dt.floor("D")
     n = int(24 * 60 / agg_minutes)
-    # +1 точка: 24:00
-    bins = pd.date_range(day_start, periods=n + 1, freq=f"{agg_minutes}min")
+    bins = pd.date_range(day_start, periods=n, freq=f"{agg_minutes}min")
 
     base = pd.Timestamp("2000-01-01")
-    x = pd.date_range(base, periods=n + 1, freq=f"{agg_minutes}min")
+    x = pd.date_range(base, periods=n, freq=f"{agg_minutes}min")
 
     if df.empty:
         s = pd.Series(index=x, data=np.nan, name=day_str)
@@ -442,24 +441,18 @@ def _build_day_series(
     s_m = s0.resample(f"{agg_minutes}min").mean()
     s_m = s_m.reindex(bins)
     s_m.index = x
-    # 24:00 — копия 00:00 (для замыкания графика)
-    if len(s_m) >= 1:
-        s_m.iloc[-1] = s_m.iloc[0]
     s_m.name = day_str
     return s_m
 
 def _compute_quantiles(series_list: List[pd.Series], agg_minutes: int) -> pd.DataFrame:
     base = pd.Timestamp("2000-01-01")
     n = int(24 * 60 / agg_minutes)
-    x = pd.date_range(base, periods=n + 1, freq=f"{agg_minutes}min")
+    x = pd.date_range(base, periods=n, freq=f"{agg_minutes}min")
 
     cols = [label for _, label in PERCENTILES]
 
     if not series_list:
         out = pd.DataFrame(index=x, data={c: np.nan for c in cols})
-        # 24:00 — копия 00:00
-        if len(out) >= 1:
-            out.iloc[-1] = out.iloc[0]
         return out
 
     df = pd.concat([s.reindex(x) for s in series_list], axis=1).reindex(x)
@@ -469,9 +462,6 @@ def _compute_quantiles(series_list: List[pd.Series], agg_minutes: int) -> pd.Dat
         data[label] = df.quantile(p, axis=1, numeric_only=True)
 
     out = pd.DataFrame(data, index=x)
-    # 24:00 — копия 00:00
-    if len(out) >= 1:
-        out.iloc[-1] = out.iloc[0]
     return out
 
 
@@ -518,16 +508,13 @@ def _write_state(client, bucket: str, project_prefix: str, state: dict) -> None:
 # -------------------- Основной процесс --------------------
 
 def _time_labels(agg_minutes: int, count: int) -> List[str]:
-    """Список меток времени (HH:MM) для строк статистики, включая 24:00."""
+    """Список меток времени (HH:MM) для строк статистики."""
     labels: List[str] = []
     for i in range(count):
         minutes = i * int(agg_minutes)
-        if minutes >= 24 * 60:
-            labels.append("24:00")
-        else:
-            h = minutes // 60
-            m = minutes % 60
-            labels.append(f"{h:02d}:{m:02d}")
+        h = minutes // 60
+        m = minutes % 60
+        labels.append(f"{h:02d}:{m:02d}")
     return labels
 
 
@@ -671,8 +658,6 @@ def _recompute_project(
         "target_column": TARGET_COLUMN,
         "percentiles": [float(p) for p, _ in PERCENTILES],
         "percentile_labels": [label for _, label in PERCENTILES],
-        "include_24h_endpoint": True,
-        "endpoint_value_rule": "copy_from_00:00",
         "days_total": int(len(days)),
         "days_weekday": int(len(weekday_series)),
         "days_weekend": int(len(weekend_series)),
