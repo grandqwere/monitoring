@@ -15,7 +15,24 @@ from core.s3_paths import build_root_key
 
 
 _STAT_HEIGHT = 560
-_FILL_COLOR = "rgba(0,0,0,0.12)"
+
+# Фиксированные цвета (не зависят от порядка отображения трасс)
+_LINE_COLORS: Dict[str, str] = {
+    "50%": "#1f77b4",
+    "90%": "#ff7f0e",
+    "95%": "#9467bd",
+    "99%": "#d62728",
+    "median": "#2ca02c",
+    "threshold": "#7f7f7f",
+}
+
+# Вложенные серые области для интервалов (внешние светлее, внутренние темнее)
+_FILL_COLORS: Dict[str, str] = {
+    "99%": "rgba(0,0,0,0.06)",
+    "95%": "rgba(0,0,0,0.09)",
+    "90%": "rgba(0,0,0,0.12)",
+    "50%": "rgba(0,0,0,0.16)",
+}
 
 # Подписи (для чекбоксов) -> (нижняя колонка, верхняя колонка)
 _INTERVALS: List[Tuple[str, str, str]] = [
@@ -25,8 +42,8 @@ _INTERVALS: List[Tuple[str, str, str]] = [
     ("99%", "P0.5", "P99.5"),
 ]
 
-# Приоритет для заливки (самый широкий интервал выигрывает)
-_FILL_PRIORITY: List[str] = ["99%", "95%", "90%", "50%"]
+# Порядок интервалов от самого широкого к самому узкому (для вложенных заливок)
+_FILL_ORDER: List[str] = ["99%", "95%", "90%", "50%"]
 
 
 def _theme_params(theme_base: str | None) -> Dict[str, str]:
@@ -98,16 +115,17 @@ def _read_stat_csv(filename: str) -> pd.DataFrame | None:
     return out
 
 
-def _pick_fill_bounds(enabled: Dict[str, bool]) -> Tuple[str, str] | None:
+def _iter_enabled_intervals_for_fill(enabled: Dict[str, bool]) -> List[Tuple[str, str, str]]:
+    """Интервалы для вложенных заливок: от самого широкого к самому узкому."""
     if not any(enabled.values()):
-        return None
-
+        return []
     label_to_bounds = {lbl: (low, high) for lbl, low, high in _INTERVALS}
-    for lbl in _FILL_PRIORITY:
-        if enabled.get(lbl, False):
+    out: List[Tuple[str, str, str]] = []
+    for lbl in _FILL_ORDER:
+        if enabled.get(lbl, False) and lbl in label_to_bounds:
             low, high = label_to_bounds[lbl]
-            return low, high
-    return None
+            out.append((lbl, low, high))
+    return out
 
 
 def _compute_y_max(df: pd.DataFrame, cols: List[str]) -> float:
@@ -120,10 +138,38 @@ def _compute_y_max(df: pd.DataFrame, cols: List[str]) -> float:
                     vals.append(m)
             except Exception:
                 pass
-    y_max = max(vals) if vals else 1.0
+    y_max = max(vals) if vals else 0.0
     if not np.isfinite(y_max) or y_max <= 0:
-        y_max = 1.0
+        return 0.0
     return y_max
+
+
+def _compute_global_y_max(
+    dfs: List[pd.DataFrame | None],
+    *,
+    enabled: Dict[str, bool],
+    show_median: bool,
+    threshold_values: List[float],
+) -> float:
+    cols: List[str] = []
+    if show_median:
+        cols.append("P50")
+    for lbl, _low_c, high_c in _INTERVALS:
+        if enabled.get(lbl, False):
+            cols.append(high_c)
+
+    mx = 0.0
+    for df in dfs:
+        if df is None or df.empty:
+            continue
+        mx = max(mx, _compute_y_max(df, cols))
+
+    if threshold_values:
+        mx = max(mx, max(threshold_values))
+
+    if not np.isfinite(mx) or mx <= 0:
+        return 1.0
+    return mx
 
 
 def _make_figure(
@@ -133,24 +179,24 @@ def _make_figure(
     agg_minutes: int | None,
     target_col: str,
     enabled: Dict[str, bool],
+    show_median: bool,
+    thresholds: List[Tuple[int, float]],
+    y_max_global: float,
     theme_base: str | None,
 ) -> go.Figure:
     params = _theme_params(theme_base)
 
     fig = go.Figure()
 
-    fill_bounds = _pick_fill_bounds(enabled)
-
-    # Заливка: только если хотя бы один интервал включён
-    if fill_bounds is not None:
-        low_c, high_c = fill_bounds
+    # Вложенные заливки интервалов (если выбран хотя бы один интервал)
+    for lbl, low_c, high_c in _iter_enabled_intervals_for_fill(enabled):
         if low_c in df.columns and high_c in df.columns:
             fig.add_trace(
                 go.Scatter(
                     x=df.index,
                     y=df[low_c],
                     mode="lines",
-                    name="__fill_low__",
+                    name=f"__fill_{lbl}_low__",
                     line=dict(width=0),
                     showlegend=False,
                     hoverinfo="skip",
@@ -161,12 +207,12 @@ def _make_figure(
                     x=df.index,
                     y=df[high_c],
                     mode="lines",
-                    name="__fill_high__",
+                    name=f"__fill_{lbl}_high__",
                     line=dict(width=0),
                     showlegend=False,
                     hoverinfo="skip",
                     fill="tonexty",
-                    fillcolor=_FILL_COLOR,
+                    fillcolor=_FILL_COLORS.get(lbl, "rgba(0,0,0,0.12)"),
                 )
             )
 
@@ -174,6 +220,7 @@ def _make_figure(
     for lbl, low_c, high_c in _INTERVALS:
         if not enabled.get(lbl, False):
             continue
+        color = _LINE_COLORS.get(lbl, None)
         if low_c in df.columns:
             fig.add_trace(
                 go.Scatter(
@@ -181,7 +228,7 @@ def _make_figure(
                     y=df[low_c],
                     mode="lines",
                     name=f"{lbl} (нижняя)",
-                    line=dict(width=1),
+                    line=dict(width=1, color=color),
                 )
             )
         if high_c in df.columns:
@@ -191,21 +238,36 @@ def _make_figure(
                     y=df[high_c],
                     mode="lines",
                     name=f"{lbl} (верхняя)",
-                    line=dict(width=1),
+                    line=dict(width=1, color=color),
                 )
             )
 
     # Медиана
-    if "P50" in df.columns:
+    if show_median and "P50" in df.columns:
         fig.add_trace(
             go.Scatter(
                 x=df.index,
                 y=df["P50"],
                 mode="lines",
-                name="Медиана (P50)",
-                line=dict(width=1),
+                name="Медиана",
+                line=dict(width=1, color=_LINE_COLORS.get("median")),
             )
         )
+
+    # Горизонтальные линии (пороги)
+    if thresholds:
+        for i, v in thresholds:
+            if v <= 0 or not np.isfinite(v):
+                continue
+            fig.add_trace(
+                go.Scatter(
+                    x=df.index,
+                    y=[v] * len(df.index),
+                    mode="lines",
+                    name=f"Линия {i}: {v:g} кВт",
+                    line=dict(width=1, dash="dash", color=_LINE_COLORS.get("threshold")),
+                )
+            )
 
     # Заголовок
     if agg_minutes is not None:
@@ -213,14 +275,8 @@ def _make_figure(
     else:
         plot_title = title
 
-    # Ось Y: от нуля (как в plot_report.py)
-    y_cols: List[str] = ["P50"]
-    if fill_bounds is not None:
-        y_cols += [fill_bounds[1]]
-    for lbl, _, high_c in _INTERVALS:
-        if enabled.get(lbl, False):
-            y_cols.append(high_c)
-    y_max = _compute_y_max(df, y_cols)
+    # Ось Y: общий диапазон для weekday/weekend
+    y_max = y_max_global
 
     fig.update_layout(
         template=params["template"],
@@ -252,7 +308,9 @@ def render_statistical_mode() -> None:
     st.markdown("### Статистические")
 
     # Чекбоксы (общие для обоих графиков)
-    c1, c2, c3, c4 = st.columns(4)
+    c0, c1, c2, c3, c4 = st.columns(5)
+    with c0:
+        cb_med = st.checkbox("Медиана", value=True, key="stat_cb_median")
     with c1:
         cb_50 = st.checkbox("50%", value=False, key="stat_cb_50")
     with c2:
@@ -262,12 +320,37 @@ def render_statistical_mode() -> None:
     with c4:
         cb_99 = st.checkbox("99%", value=False, key="stat_cb_99")
 
-    enabled = {
+    enabled: Dict[str, bool] = {
         "50%": bool(cb_50),
         "90%": bool(cb_90),
         "95%": bool(cb_95),
         "99%": bool(cb_99),
     }
+
+    show_median = bool(cb_med)
+
+    # 5 чекбоксов + числовые поля для горизонтальных линий (кВт)
+    thresholds: List[Tuple[int, float]] = []
+    threshold_values: List[float] = []
+    for i in range(1, 6):
+        a, b = st.columns([0.25, 0.75])
+        with a:
+            en = st.checkbox(f"Линия {i}", value=False, key=f"stat_thr_en_{i}")
+        with b:
+            v = st.number_input(
+                f"Линия {i} (кВт)",
+                min_value=0.0,
+                value=0.0,
+                step=1.0,
+                key=f"stat_thr_val_{i}",
+            )
+        try:
+            vv = float(v)
+        except Exception:
+            vv = 0.0
+        if en and vv > 0 and np.isfinite(vv):
+            thresholds.append((i, vv))
+            threshold_values.append(vv)
 
     state = _read_stat_state()
     agg_minutes = state.get("agg_minutes", None)
@@ -280,9 +363,17 @@ def render_statistical_mode() -> None:
 
     theme_base = st.get_option("theme.base") or "light"
 
-    shown = 0
-
     df_weekday = _read_stat_csv("weekday.csv")
+    df_weekend = _read_stat_csv("weekend.csv")
+
+    shown = 0
+    y_max = _compute_global_y_max(
+        [df_weekday, df_weekend],
+        enabled=enabled,
+        show_median=show_median,
+        threshold_values=threshold_values,
+    )
+
     if df_weekday is not None and not df_weekday.empty:
         fig_wd = _make_figure(
             df_weekday,
@@ -290,12 +381,14 @@ def render_statistical_mode() -> None:
             agg_minutes=agg_minutes,
             target_col=target_col,
             enabled=enabled,
+            show_median=show_median,
+            thresholds=thresholds,
+            y_max_global=y_max,
             theme_base=theme_base,
         )
         st.plotly_chart(fig_wd, use_container_width=True, config={"responsive": True}, key="stat_weekday")
         shown += 1
 
-    df_weekend = _read_stat_csv("weekend.csv")
     if df_weekend is not None and not df_weekend.empty:
         fig_we = _make_figure(
             df_weekend,
@@ -303,6 +396,9 @@ def render_statistical_mode() -> None:
             agg_minutes=agg_minutes,
             target_col=target_col,
             enabled=enabled,
+            show_median=show_median,
+            thresholds=thresholds,
+            y_max_global=y_max,
             theme_base=theme_base,
         )
         st.plotly_chart(fig_we, use_container_width=True, config={"responsive": True}, key="stat_weekend")
