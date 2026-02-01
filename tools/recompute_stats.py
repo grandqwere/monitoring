@@ -7,6 +7,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+import time
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import boto3
@@ -18,13 +19,25 @@ from botocore.exceptions import ClientError
 
 # -------------------- Константы статистики --------------------
 
-TARGET_COLUMN = "el_P_obj_kW"   # верхние 2 графика из plot_report.py: объектная мощность
+# Имя столбца мощности, по которому строим статистику
+TARGET_COLUMN = "P_total"
 TIME_COLUMN = "timestamp"
 
-# Квантили как в plot_report.py
-Q_LOW = 0.05
-Q_MED = 0.50
-Q_HIGH = 0.95
+# Перцентили для границ центральных интервалов
+#  - P2.5 / P97.5: центральный 95%
+#  - P5   / P95  : центральный 90%
+#  - P0.5 / P99.5: центральный 98%
+#  - P25  / P75  : центральный 50%
+PERCENTILES: List[Tuple[float, str]] = [
+    (0.005, "P0.5"),
+    (0.025, "P2.5"),
+    (0.05, "P5"),
+    (0.25, "P25"),
+    (0.75, "P75"),
+    (0.95, "P95"),
+    (0.975, "P97.5"),
+    (0.995, "P99.5"),
+]
 
 AGG_MINUTES_FALLBACK = 5
 PROCESS_SETTINGS_KEY = "plot_agg_minutes"
@@ -413,10 +426,12 @@ def _build_day_series(
         day_dt = pd.Timestamp("1970-01-01")
 
     day_start = day_dt.floor("D")
-    bins = pd.date_range(day_start, periods=int(24 * 60 / agg_minutes), freq=f"{agg_minutes}min")
+    n = int(24 * 60 / agg_minutes)
+    # +1 точка: 24:00
+    bins = pd.date_range(day_start, periods=n + 1, freq=f"{agg_minutes}min")
 
     base = pd.Timestamp("2000-01-01")
-    x = pd.date_range(base, periods=len(bins), freq=f"{agg_minutes}min")
+    x = pd.date_range(base, periods=n + 1, freq=f"{agg_minutes}min")
 
     if df.empty:
         s = pd.Series(index=x, data=np.nan, name=day_str)
@@ -427,24 +442,38 @@ def _build_day_series(
     s_m = s0.resample(f"{agg_minutes}min").mean()
     s_m = s_m.reindex(bins)
     s_m.index = x
+    # 24:00 — копия 00:00 (для замыкания графика)
+    if len(s_m) >= 1:
+        s_m.iloc[-1] = s_m.iloc[0]
     s_m.name = day_str
     return s_m
 
 def _compute_quantiles(series_list: List[pd.Series], agg_minutes: int) -> pd.DataFrame:
     base = pd.Timestamp("2000-01-01")
-    x = pd.date_range(base, periods=int(24 * 60 / agg_minutes), freq=f"{agg_minutes}min")
+    n = int(24 * 60 / agg_minutes)
+    x = pd.date_range(base, periods=n + 1, freq=f"{agg_minutes}min")
+
+    cols = [label for _, label in PERCENTILES]
 
     if not series_list:
-        return pd.DataFrame(index=x, data={"q_low": np.nan, "median": np.nan, "q_high": np.nan})
+        out = pd.DataFrame(index=x, data={c: np.nan for c in cols})
+        # 24:00 — копия 00:00
+        if len(out) >= 1:
+            out.iloc[-1] = out.iloc[0]
+        return out
 
     df = pd.concat([s.reindex(x) for s in series_list], axis=1).reindex(x)
 
-    q_low = df.quantile(Q_LOW, axis=1, numeric_only=True)
-    q_med = df.quantile(Q_MED, axis=1, numeric_only=True)
-    q_high = df.quantile(Q_HIGH, axis=1, numeric_only=True)
+    data: Dict[str, pd.Series] = {}
+    for p, label in PERCENTILES:
+        data[label] = df.quantile(p, axis=1, numeric_only=True)
 
-    out = pd.DataFrame({"q_low": q_low, "median": q_med, "q_high": q_high}, index=x)
+    out = pd.DataFrame(data, index=x)
+    # 24:00 — копия 00:00
+    if len(out) >= 1:
+        out.iloc[-1] = out.iloc[0]
     return out
+
 
 
 # -------------------- process_settings.json (agg_minutes) --------------------
@@ -488,19 +517,36 @@ def _write_state(client, bucket: str, project_prefix: str, state: dict) -> None:
 
 # -------------------- Основной процесс --------------------
 
+def _time_labels(agg_minutes: int, count: int) -> List[str]:
+    """Список меток времени (HH:MM) для строк статистики, включая 24:00."""
+    labels: List[str] = []
+    for i in range(count):
+        minutes = i * int(agg_minutes)
+        if minutes >= 24 * 60:
+            labels.append("24:00")
+        else:
+            h = minutes // 60
+            m = minutes % 60
+            labels.append(f"{h:02d}:{m:02d}")
+    return labels
+
+
 def _write_quantile_csv(
     client,
     bucket: str,
     project_prefix: str,
     filename: str,
     qdf: pd.DataFrame,
+    *,
+    agg_minutes: int,
 ) -> None:
     out = qdf.copy()
-    out.insert(0, "time", [ts.strftime("%H:%M") for ts in out.index])
-    out = out[["time", "q_low", "median", "q_high"]]
+    cols = [label for _, label in PERCENTILES]
+    out.insert(0, "time", _time_labels(agg_minutes, len(out)))
+    out = out[["time"] + cols]
 
     buf = io.StringIO()
-    out.to_csv(buf, index=False, sep=";")
+    out.to_csv(buf, index=False, sep=";", decimal=",")
     data = buf.getvalue().encode("utf-8-sig")
 
     key = f"{project_prefix}Stat/{filename}"
@@ -513,41 +559,65 @@ def _recompute_project(
     project_prefix: str,
     base_calendar_cache: Dict[int, Set[date]],
     region_calendar_cache: Dict[Tuple[str, int], Set[date]],
-) -> None:
+) -> str:
     project_name = project_prefix.rstrip("/").split("/")[-1]
     print(f"\n== Проект: {project_name} ==")
 
     if not _s3_prefix_has_any_object(client, bucket, project_prefix + "All/"):
         print("  нет папки All/ — пропуск")
-        return
+        return "skipped_no_all"
 
     days = _discover_days(client, bucket, project_prefix)
     last_day = _latest_day(days)
     if not last_day:
         print("  нет дней в All/ — пропуск")
-        return
+        return "skipped_no_days"
 
     sig = _day_signature(client, bucket, project_prefix, last_day)
     state = _read_state(client, bucket, project_prefix)
+
+    agg_minutes = _get_agg_minutes_for_project(client, bucket, project_prefix)
 
     prev_day = str(state.get("last_day") or "")
     prev_count = int(state.get("last_day_file_count") or 0)
     prev_lm = str(state.get("last_day_max_last_modified") or "")
     prev_max_key = str(state.get("last_day_max_key") or "")
 
-    same = (
+    same_input = (
         prev_day == sig["day"]
         and prev_count == int(sig["file_count"])
         and prev_lm == str(sig["max_last_modified"])
         and prev_max_key == str(sig["max_key"])
     )
 
-    if same:
-        print(f"  последняя дата {last_day}: новых файлов нет — пересчёт не нужен")
-        return
+    prev_target = str(state.get("target_column") or "")
+    prev_agg = int(state.get("agg_minutes") or 0)
+    prev_percentiles = list(state.get("percentiles") or [])
+    cur_percentiles = [float(p) for p, _ in PERCENTILES]
 
-    agg_minutes = _get_agg_minutes_for_project(client, bucket, project_prefix)
-    print(f"  последняя дата {last_day}: обнаружены изменения, пересчитываю все дни (agg_minutes={agg_minutes})")
+    same_params = (
+        prev_target == TARGET_COLUMN
+        and prev_agg == int(agg_minutes)
+        and prev_percentiles == cur_percentiles
+    )
+
+    # Если выходных файлов нет (или они пустые), пересчёт обязателен
+    wd_ok = bool(_s3_get_bytes(client, bucket, f"{project_prefix}Stat/weekday.csv"))
+    we_ok = bool(_s3_get_bytes(client, bucket, f"{project_prefix}Stat/weekend.csv"))
+    outputs_ok = wd_ok and we_ok
+
+    if same_input and same_params and outputs_ok:
+        print(f"  последняя дата {last_day}: новых файлов нет и параметры не менялись — пересчёт не нужен")
+        return "skipped_no_changes"
+
+    if not same_input:
+        reason = "обнаружены изменения во входных данных"
+    elif not same_params:
+        reason = "параметры расчёта изменились"
+    else:
+        reason = "выходные файлы отсутствуют/пустые"
+
+    print(f"  последняя дата {last_day}: {reason}, пересчитываю все дни (agg_minutes={agg_minutes})")
 
     weekday_series: List[pd.Series] = []
     weekend_series: List[pd.Series] = []
@@ -587,19 +657,22 @@ def _recompute_project(
     q_weekday = _compute_quantiles(weekday_series, agg_minutes)
     q_weekend = _compute_quantiles(weekend_series, agg_minutes)
 
-    _write_quantile_csv(client, bucket, project_prefix, "weekday.csv", q_weekday)
-    _write_quantile_csv(client, bucket, project_prefix, "weekend.csv", q_weekend)
+    _write_quantile_csv(client, bucket, project_prefix, "weekday.csv", q_weekday, agg_minutes=agg_minutes)
+    _write_quantile_csv(client, bucket, project_prefix, "weekend.csv", q_weekend, agg_minutes=agg_minutes)
 
     new_state = {
+        "schema_version": 2,
+        "computed_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "last_day": sig["day"],
         "last_day_file_count": int(sig["file_count"]),
         "last_day_max_key": str(sig["max_key"]),
         "last_day_max_last_modified": str(sig["max_last_modified"]),
         "agg_minutes": int(agg_minutes),
         "target_column": TARGET_COLUMN,
-        "q_low": Q_LOW,
-        "q_med": Q_MED,
-        "q_high": Q_HIGH,
+        "percentiles": [float(p) for p, _ in PERCENTILES],
+        "percentile_labels": [label for _, label in PERCENTILES],
+        "include_24h_endpoint": True,
+        "endpoint_value_rule": "copy_from_00:00",
         "days_total": int(len(days)),
         "days_weekday": int(len(weekday_series)),
         "days_weekend": int(len(weekend_series)),
@@ -607,9 +680,12 @@ def _recompute_project(
     _write_state(client, bucket, project_prefix, new_state)
 
     print(f"  готово: Stat/weekday.csv, Stat/weekend.csv, Stat/state.json")
+    return "ok"
 
 
 def main() -> int:
+    t_total_start = time.perf_counter()
+
     cfg = _load_s3_cfg()
     client = _make_s3_client(cfg)
 
@@ -620,8 +696,11 @@ def main() -> int:
     print(f"Найдено проектов: {len(projects)}")
 
     for p in projects:
+        project_name = p.rstrip("/").split("/")[-1]
+        t_proj_start = time.perf_counter()
+        status = "ok"
         try:
-            _recompute_project(
+            status = _recompute_project(
                 client=client,
                 bucket=cfg.bucket,
                 project_prefix=p,
@@ -629,9 +708,15 @@ def main() -> int:
                 region_calendar_cache=region_calendar_cache,
             )
         except Exception as e:
+            status = "error"
             # не валим весь run из-за одного проекта
             print(f"\n!! Ошибка проекта {p}: {e}")
 
+        dt = time.perf_counter() - t_proj_start
+        print(f"TIME project={project_name} seconds={dt:.3f} status={status}")
+
+    total_dt = time.perf_counter() - t_total_start
+    print(f"\nTIME total seconds={total_dt:.3f} projects={len(projects)}")
     print("\nГотово.")
     return 0
 
