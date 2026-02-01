@@ -10,6 +10,7 @@ from core import state
 from views.daily import render_daily_mode
 from views.hourly import render_hourly_mode
 from views.minutely import render_minutely_mode  # NEW
+from views.statistical import render_statistical_mode  # NEW
 from core.hour_loader import init_hour_state
 from core.minute_loader import init_minute_state  # NEW
 from core.data_io import read_text_s3
@@ -90,6 +91,9 @@ def _clear_all_caches():
         "__pending_minute_date", "__pending_minute_hour", "__pending_minute_minute",
         "__minute_picker_redraw",
         "refresh_minutely_all",
+
+        # statistical
+        "stat_cb_50", "stat_cb_90", "stat_cb_95", "stat_cb_99",
     ]:
         if k in st.session_state:
             del st.session_state[k]
@@ -180,12 +184,14 @@ if "mode_segmented" not in st.session_state:
         st.session_state["mode_segmented"] = "Минутные"
     elif st.session_state["mode"] == "hourly":
         st.session_state["mode_segmented"] = "Часовые"
+    elif st.session_state["mode"] == "statistical":
+        st.session_state["mode_segmented"] = "Статистические"
     else:
         st.session_state["mode_segmented"] = "Суточные"
 
 # Горизонтальный переключатель «Вид графиков»
 label = "Вид графиков"
-options = ["Минутные", "Часовые", "Суточные"]
+options = ["Минутные", "Часовые", "Суточные", "Статистические"]
 
 try:
     chosen = st.segmented_control(
@@ -200,6 +206,8 @@ except Exception:
         idx = 0
     elif st.session_state["mode"] == "hourly":
         idx = 1
+    elif st.session_state["mode"] == "statistical":
+        idx = 3
     chosen = st.radio(
         label,
         options=options,
@@ -210,15 +218,19 @@ except Exception:
 
 if chosen == "Минутные":
     st.session_state["mode"] = "minutely"
-elif chosen == "Суточные":
-    st.session_state["mode"] = "daily"
-else:
+elif chosen == "Часовые":
     st.session_state["mode"] = "hourly"
+elif chosen == "Статистические":
+    st.session_state["mode"] = "statistical"
+else:
+    st.session_state["mode"] = "daily"
 
 # Роутинг по режимам
 if st.session_state["mode"] == "minutely":
     render_minutely_mode()
 elif st.session_state["mode"] == "daily":
     render_daily_mode()
+elif st.session_state["mode"] == "statistical":
+    render_statistical_mode()
 else:
     render_hourly_mode()
