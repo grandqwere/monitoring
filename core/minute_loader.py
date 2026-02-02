@@ -56,12 +56,14 @@ def _drop_service_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _keep_prefix_cols(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
-    """Оставляем только колонки, начинающиеся с prefix (регистронезависимо)."""
+def _keep_prefix_cols(df: pd.DataFrame, prefixes: str | list[str]) -> pd.DataFrame:
+    """Оставляем только колонки, начинающиеся с одного из prefixes (регистронезависимо)."""
     if df is None or df.empty:
         return df
-    p = prefix.lower()
-    cols = [c for c in df.columns if str(c).lower().startswith(p)]
+    if isinstance(prefixes, str):
+        prefixes = [prefixes]
+    ps = [str(p).lower() for p in prefixes]
+    cols = [c for c in df.columns if any(str(c).lower().startswith(p) for p in ps)]
     if not cols:
         return df.head(0)  # пустой, но с индексом
     return df[cols].copy()
@@ -87,8 +89,7 @@ def load_minute(d: date_cls, h: int, m: int, *, silent: bool = True) -> pd.DataF
         key_i = build_ipeak_key_for(d, h, m)
         df_raw_i = read_csv_s3(key_i)
         df_i = normalize(df_raw_i)
-        df_i = _drop_service_cols(df_i)
-        df_i = _keep_prefix_cols(df_i, "Ipeak")
+        df_i = _keep_prefix_cols(df_i, ["Ipeak", "k_I"])
     except Exception:
         df_i = None
 
@@ -98,8 +99,7 @@ def load_minute(d: date_cls, h: int, m: int, *, silent: bool = True) -> pd.DataF
         key_u = build_upeak_key_for(d, h, m)
         df_raw_u = read_csv_s3(key_u)
         df_u = normalize(df_raw_u)
-        df_u = _drop_service_cols(df_u)
-        df_u = _keep_prefix_cols(df_u, "Upeak")
+        df_u = _keep_prefix_cols(df_u, ["Upeak", "k_U"])
     except Exception:
         df_u = None
 
