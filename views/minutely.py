@@ -161,24 +161,40 @@ def render_minutely_mode() -> None:
 
     theme_base = st.get_option("theme.base") or "light"
 
-    # Переключатель значений: «Амплитудные / Действующие (приведенные)»
-    if "minutely_value_mode" not in st.session_state:
-        st.session_state["minutely_value_mode"] = "Действующие (приведенные)"
+    # Переключатель значений (без заголовка): «Действующие (приведенные) / Амплитудные»
+    options = ["Действующие (приведенные)", "Амплитудные"]
+    default_mode = "Действующие (приведенные)"
+
+    if st.session_state.get("minutely_value_mode") not in options:
+        st.session_state["minutely_value_mode"] = default_mode
 
     try:
         val_mode = st.segmented_control(
-            "Амплитудные / Действующие (приведенные)",
-            options=["Амплитудные", "Действующие (приведенные)"],
+            "",
+            options=options,
+            default=default_mode,
             key="minutely_value_mode",
+            label_visibility="collapsed",
         )
     except Exception:
         # Фолбэк для старых версий Streamlit
-        val_mode = st.radio(
-            "Амплитудные / Действующие (приведенные)",
-            options=["Амплитудные", "Действующие (приведенные)"],
-            horizontal=True,
-            key="minutely_value_mode",
-        )
+        try:
+            val_mode = st.radio(
+                "",
+                options=options,
+                index=0,
+                horizontal=True,
+                key="minutely_value_mode",
+                label_visibility="collapsed",
+            )
+        except Exception:
+            val_mode = st.radio(
+                "",
+                options=options,
+                index=0,
+                horizontal=True,
+                key="minutely_value_mode",
+            )
 
     if val_mode == "Амплитудные":
         df_current = df_current.copy()
