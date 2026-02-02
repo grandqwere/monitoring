@@ -329,7 +329,13 @@ def render_statistical_mode() -> None:
         unsafe_allow_html=True,
     )
 
-    st.markdown("#### Пороги мощности (ручные):")
+    def _section_label(text: str) -> None:
+        st.markdown(
+            f"<div style='font-size: 1.2rem; font-weight: 600; line-height: 1.25; margin: 0.35rem 0 0.25rem 0;'>{text}</div>",
+            unsafe_allow_html=True,
+        )
+
+    _section_label("Пороги мощности (ручные):")
 
     # 5 чекбоксов + числовые поля для горизонтальных линий "Мощность" (кВт)
     thresholds: List[Tuple[int, int]] = []
@@ -358,7 +364,7 @@ def render_statistical_mode() -> None:
     # Увеличение мощности объекта на (кВт): поднимаем все значения из CSV на эту величину
     col_lbl, col_inp, _sp = st.columns([1.6, 1.1, 5.3])
     with col_lbl:
-        st.markdown("**Увеличить мощность объекта на (кВт):**")
+        _section_label("Увеличить мощность объекта на (кВт):")
     with col_inp:
         shift_kw = st.number_input(
             "shift_kw",
@@ -374,7 +380,7 @@ def render_statistical_mode() -> None:
     except Exception:
         shift_kw_int = 0
 
-    st.markdown("#### Интервал мощности, % времени")
+    _section_label("Интервал мощности, % времени")
 
     # Чекбоксы линий (общие для обоих графиков) — ближе к графикам
     c0, c1, c2, c3, c4 = st.columns(5)
