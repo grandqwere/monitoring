@@ -161,6 +161,38 @@ def render_minutely_mode() -> None:
 
     theme_base = st.get_option("theme.base") or "light"
 
+    # Переключатель значений: «Амплитудные / Действующие (приведенные)»
+    if "minutely_value_mode" not in st.session_state:
+        st.session_state["minutely_value_mode"] = "Действующие (приведенные)"
+
+    try:
+        val_mode = st.segmented_control(
+            "Амплитудные / Действующие (приведенные)",
+            options=["Амплитудные", "Действующие (приведенные)"],
+            key="minutely_value_mode",
+        )
+    except Exception:
+        # Фолбэк для старых версий Streamlit
+        val_mode = st.radio(
+            "Амплитудные / Действующие (приведенные)",
+            options=["Амплитудные", "Действующие (приведенные)"],
+            horizontal=True,
+            key="minutely_value_mode",
+        )
+
+    if val_mode == "Амплитудные":
+        df_current = df_current.copy()
+        for ph in ("L1", "L2", "L3"):
+            v = f"Ipeak_{ph}"
+            k = f"k_I_{ph}"
+            if v in df_current.columns and k in df_current.columns:
+                df_current[v] = df_current[v] * df_current[k]
+        for ph in ("L1", "L2", "L3"):
+            v = f"Upeak_{ph}"
+            k = f"k_U_{ph}"
+            if v in df_current.columns and k in df_current.columns:
+                df_current[v] = df_current[v] * df_current[k]
+
     # Кнопка «Обновить все графики»
     if "refresh_minutely_all" not in st.session_state:
         st.session_state["refresh_minutely_all"] = 0
