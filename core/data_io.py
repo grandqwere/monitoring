@@ -74,6 +74,19 @@ def read_csv_s3(key: str) -> pd.DataFrame:
     data = obj["Body"].read()
     return _read_csv_bytes(data)
 
+def read_bytes_s3(key: str) -> bytes:
+    """
+    Прочитать файл из S3 и вернуть как bytes.
+    Возвращает b"" при ошибке/отсутствии объекта.
+    """
+    try:
+        client = _get_s3_client()
+        obj = client.get_object(Bucket=_bucket_name(), Key=key)
+        return obj["Body"].read()
+    except Exception:
+        return b""
+
+
 def read_text_s3(key: str) -> str:
     """
     Прочитать текстовый файл из S3 и вернуть как str.
