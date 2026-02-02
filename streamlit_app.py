@@ -1,6 +1,8 @@
 # streamlit_app.py
 from __future__ import annotations
 
+import io
+import zipfile
 import streamlit as st
 
 st.set_page_config(page_title="Мониторинг электрических параметров", layout="wide")
@@ -13,8 +15,13 @@ from views.minutely import render_minutely_mode  # NEW
 from views.statistical import render_statistical_mode  # NEW
 from core.hour_loader import init_hour_state
 from core.minute_loader import init_minute_state  # NEW
-from core.data_io import read_text_s3
-from core.s3_paths import build_root_key
+from core.data_io import read_text_s3, read_bytes_s3
+from core.s3_paths import (
+    build_root_key,
+    build_all_key_for,
+    build_ipeak_key_for,
+    build_upeak_key_for,
+)
 state.init_once()
 init_hour_state()
 init_minute_state()  # NEW
@@ -164,6 +171,77 @@ def _current_title() -> str:
     return default
 
 
+def _strip_current_prefix(key: str) -> str:
+    curr = str(st.session_state.get("current_prefix", "") or "").strip().rstrip("/")
+    if curr and key.startswith(curr + "/"):
+        return key[len(curr) + 1 :]
+    return key.lstrip("/")
+
+
+def _download_keys_and_name() -> tuple[list[str], str]:
+    mode = st.session_state.get("mode") or "daily"
+
+    if mode == "statistical":
+        keys = [
+            build_root_key("Stat/weekday.csv"),
+            build_root_key("Stat/weekend.csv"),
+        ]
+        return keys, "statistical.zip"
+
+    if mode == "daily":
+        day = st.session_state.get("selected_day")
+        if not day:
+            return [], ""
+        daily_cache = st.session_state.get("__daily_cache") or {}
+        day_key = day.strftime("%Y%m%d")
+        entry = daily_cache.get(day_key) or {}
+        hours = sorted(list(entry.get("hours_present") or []))
+        keys = [build_all_key_for(day, int(h)) for h in hours]
+        return keys, f"daily_{day.isoformat()}.zip"
+
+    if mode == "hourly":
+        loaded = st.session_state.get("loaded_hours") or []
+        if not loaded:
+            return [], ""
+        keys = [build_all_key_for(d, int(h)) for d, h in loaded]
+        if len(loaded) == 1:
+            d, h = loaded[0]
+            return keys, f"hourly_{d.isoformat()}_{int(h):02d}.zip"
+        (d1, h1), (d2, h2) = loaded[0], loaded[1]
+        return keys, f"hourly_{d1.isoformat()}_{int(h1):02d}__{d2.isoformat()}_{int(h2):02d}.zip"
+
+    if mode == "minutely":
+        loaded = st.session_state.get("loaded_minutes") or []
+        if not loaded:
+            return [], ""
+        keys: list[str] = []
+        for d, h, m in loaded:
+            keys.append(build_ipeak_key_for(d, int(h), int(m)))
+            keys.append(build_upeak_key_for(d, int(h), int(m)))
+        if len(loaded) == 1:
+            d, h, m = loaded[0]
+            return keys, f"minutely_{d.isoformat()}_{int(h):02d}.{int(m):02d}.zip"
+        (d1, h1, m1), (d2, h2, m2) = loaded[0], loaded[1]
+        return keys, f"minutely_{d1.isoformat()}_{int(h1):02d}.{int(m1):02d}__{d2.isoformat()}_{int(h2):02d}.{int(m2):02d}.zip"
+
+    return [], ""
+
+
+def _build_zip_from_keys(keys: list[str]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for key in keys:
+            data = read_bytes_s3(key)
+            if not data:
+                continue
+            arcname = _strip_current_prefix(key)
+            if not arcname:
+                continue
+            zf.writestr(arcname, data)
+    return buf.getvalue()
+
+
+
 st.markdown(f"<h3 style='margin:0'>{_current_title()}</h3>", unsafe_allow_html=True)
 
 # Кнопка «Выйти» (без строки «Источник данных»)
@@ -189,32 +267,38 @@ if "mode_segmented" not in st.session_state:
     else:
         st.session_state["mode_segmented"] = "Суточные"
 
-# Горизонтальный переключатель «Вид графиков»
+# Горизонтальный переключатель «Вид графиков» + кнопка «Скачать данные»
 label = "Вид графиков"
 options = ["Минутные", "Часовые", "Суточные", "Статистические"]
 
-try:
-    chosen = st.segmented_control(
-        label,
-        options=options,
-        key="mode_segmented",
-    )
-except Exception:
-    # Фолбэк для старых версий Streamlit
-    idx = 2  # daily
-    if st.session_state["mode"] == "minutely":
-        idx = 0
-    elif st.session_state["mode"] == "hourly":
-        idx = 1
-    elif st.session_state["mode"] == "statistical":
-        idx = 3
-    chosen = st.radio(
-        label,
-        options=options,
-        horizontal=True,
-        index=idx,
-        key="mode_segmented",
-    )
+nav_left, nav_right = st.columns([0.8, 0.2])
+
+with nav_left:
+    try:
+        chosen = st.segmented_control(
+            label,
+            options=options,
+            key="mode_segmented",
+        )
+    except Exception:
+        # Фолбэк для старых версий Streamlit
+        idx = 2  # daily
+        if st.session_state["mode"] == "minutely":
+            idx = 0
+        elif st.session_state["mode"] == "hourly":
+            idx = 1
+        elif st.session_state["mode"] == "statistical":
+            idx = 3
+        chosen = st.radio(
+            label,
+            options=options,
+            horizontal=True,
+            index=idx,
+            key="mode_segmented",
+        )
+
+with nav_right:
+    download_ph = st.empty()
 
 if chosen == "Минутные":
     st.session_state["mode"] = "minutely"
@@ -234,3 +318,19 @@ elif st.session_state["mode"] == "statistical":
     render_statistical_mode()
 else:
     render_hourly_mode()
+
+
+# Кнопка «Скачать данные» (ZIP) — справа от переключателя режимов, под кнопкой «Выйти»
+keys, zip_name = _download_keys_and_name()
+if keys:
+    zip_bytes = _build_zip_from_keys(keys)
+    if zip_bytes:
+        download_ph.download_button(
+            "Скачать данные (ZIP)",
+            data=zip_bytes,
+            file_name=zip_name or "data.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
+else:
+    download_ph.empty()
