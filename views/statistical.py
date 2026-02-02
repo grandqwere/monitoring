@@ -329,6 +329,8 @@ def render_statistical_mode() -> None:
         unsafe_allow_html=True,
     )
 
+    st.markdown("#### Пороги мощности (ручные):")
+
     # 5 чекбоксов + числовые поля для горизонтальных линий "Мощность" (кВт)
     thresholds: List[Tuple[int, int]] = []
     threshold_values: List[int] = []
@@ -371,6 +373,8 @@ def render_statistical_mode() -> None:
         shift_kw_int = int(shift_kw)
     except Exception:
         shift_kw_int = 0
+
+    st.markdown("#### Интервал мощности, % времени")
 
     # Чекбоксы линий (общие для обоих графиков) — ближе к графикам
     c0, c1, c2, c3, c4 = st.columns(5)
