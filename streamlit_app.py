@@ -1,6 +1,6 @@
 # streamlit_app.py
 from __future__ import annotations
-# s
+
 import io
 import zipfile
 import streamlit as st
@@ -178,15 +178,62 @@ def _strip_current_prefix(key: str) -> str:
     return key.lstrip("/")
 
 
-def _download_keys_and_name() -> tuple[list[str], str]:
+def _is_demo_mode() -> bool:
+    """Определяем демо-режим: auth_mode == 'demo' или текущий префикс совпадает с auth.demo_prefix."""
+    try:
+        if st.session_state.get("auth_mode") == "demo":
+            return True
+        demo_pref = str(st.secrets.get("auth", {}).get("demo_prefix", "")).strip().rstrip("/")
+        curr_pref = str(st.session_state.get("current_prefix", "")).strip().rstrip("/")
+        return bool(demo_pref and curr_pref and curr_pref == demo_pref)
+    except Exception:
+        return False
+
+
+def _day_folder(d) -> str:
+    return f"{d.year:04d}.{d.month:02d}.{d.day:02d}"
+
+
+def _render_all_filename_for_zip(d, hour: int) -> str:
+    """Имя часового файла (All-...) для архива. В демо — по отображаемой дате, без маппинга."""
+    try:
+        tpl = str(st.secrets.get("s3", {}).get("key_template", "")).strip()
+    except Exception:
+        tpl = ""
+    if not tpl:
+        tpl = "All-{YYYY}.{MM}.{DD}-{HH}.00.csv"
+    return (
+        tpl.replace("{YYYY}", f"{d.year:04d}")
+           .replace("{MM}", f"{d.month:02d}")
+           .replace("{DD}", f"{d.day:02d}")
+           .replace("{HH}", f"{hour:02d}")
+           .replace("{mm}", "00")
+    )
+
+
+def _all_arcname_for_zip(d, hour: int) -> str:
+    df = _day_folder(d)
+    fname = _render_all_filename_for_zip(d, hour)
+    return f"All/{df}/{fname}"
+
+
+def _peak_arcname_for_zip(kind: str, d, hour: int, minute: int) -> str:
+    df = _day_folder(d)
+    fname = f"{kind}-{df}-{hour:02d}.{minute:02d}.csv"
+    return f"{kind}/{df}/{fname}"
+
+
+def _download_keys_and_name() -> tuple[list[tuple[str, str | None]], str]:
     mode = st.session_state.get("mode") or "daily"
+    demo = _is_demo_mode()
 
     if mode == "statistical":
         keys = [
             build_root_key("Stat/weekday.csv"),
             build_root_key("Stat/weekend.csv"),
         ]
-        return keys, "statistical.zip"
+        items = [(k, None) for k in keys]
+        return items, "statistical.zip"
 
     if mode == "daily":
         day = st.session_state.get("selected_day")
@@ -197,44 +244,60 @@ def _download_keys_and_name() -> tuple[list[str], str]:
         entry = daily_cache.get(day_key) or {}
         hours = sorted(list(entry.get("hours_present") or []))
         keys = [build_all_key_for(day, int(h)) for h in hours]
-        return keys, f"daily_{day.isoformat()}.zip"
+        if demo:
+            items = [(k, _all_arcname_for_zip(day, int(h))) for k, h in zip(keys, hours)]
+        else:
+            items = [(k, None) for k in keys]
+        return items, f"daily_{day.isoformat()}.zip"
 
     if mode == "hourly":
         loaded = st.session_state.get("loaded_hours") or []
         if not loaded:
             return [], ""
         keys = [build_all_key_for(d, int(h)) for d, h in loaded]
+        if demo:
+            items = [(k, _all_arcname_for_zip(d, int(h))) for (d, h), k in zip(loaded, keys)]
+        else:
+            items = [(k, None) for k in keys]
+
         if len(loaded) == 1:
             d, h = loaded[0]
-            return keys, f"hourly_{d.isoformat()}_{int(h):02d}.zip"
+            return items, f"hourly_{d.isoformat()}_{int(h):02d}.zip"
         (d1, h1), (d2, h2) = loaded[0], loaded[1]
-        return keys, f"hourly_{d1.isoformat()}_{int(h1):02d}__{d2.isoformat()}_{int(h2):02d}.zip"
+        return items, f"hourly_{d1.isoformat()}_{int(h1):02d}__{d2.isoformat()}_{int(h2):02d}.zip"
 
     if mode == "minutely":
         loaded = st.session_state.get("loaded_minutes") or []
         if not loaded:
             return [], ""
-        keys: list[str] = []
+        items: list[tuple[str, str | None]] = []
         for d, h, m in loaded:
-            keys.append(build_ipeak_key_for(d, int(h), int(m)))
-            keys.append(build_upeak_key_for(d, int(h), int(m)))
+            k_i = build_ipeak_key_for(d, int(h), int(m))
+            k_u = build_upeak_key_for(d, int(h), int(m))
+            if demo:
+                items.append((k_i, _peak_arcname_for_zip("Ipeak", d, int(h), int(m))))
+                items.append((k_u, _peak_arcname_for_zip("Upeak", d, int(h), int(m))))
+            else:
+                items.append((k_i, None))
+                items.append((k_u, None))
+
         if len(loaded) == 1:
             d, h, m = loaded[0]
-            return keys, f"minutely_{d.isoformat()}_{int(h):02d}.{int(m):02d}.zip"
+            return items, f"minutely_{d.isoformat()}_{int(h):02d}.{int(m):02d}.zip"
         (d1, h1, m1), (d2, h2, m2) = loaded[0], loaded[1]
-        return keys, f"minutely_{d1.isoformat()}_{int(h1):02d}.{int(m1):02d}__{d2.isoformat()}_{int(h2):02d}.{int(m2):02d}.zip"
+        return items, f"minutely_{d1.isoformat()}_{int(h1):02d}.{int(m1):02d}__{d2.isoformat()}_{int(h2):02d}.{int(m2):02d}.zip"
 
     return [], ""
 
 
-def _build_zip_from_keys(keys: list[str]) -> bytes:
+def _build_zip_from_keys(items: list[tuple[str, str | None]]) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for key in keys:
+        for key, arcname_override in items:
             data = read_bytes_s3(key)
             if not data:
                 continue
-            arcname = _strip_current_prefix(key)
+            arcname = arcname_override or _strip_current_prefix(key)
             if not arcname:
                 continue
             zf.writestr(arcname, data)
@@ -321,9 +384,9 @@ else:
 
 
 # Кнопка «Скачать данные» (ZIP) — справа от переключателя режимов, под кнопкой «Выйти»
-keys, zip_name = _download_keys_and_name()
-if keys:
-    zip_bytes = _build_zip_from_keys(keys)
+items, zip_name = _download_keys_and_name()
+if items:
+    zip_bytes = _build_zip_from_keys(items)
     if zip_bytes:
         download_ph.download_button(
             "Скачать данные (ZIP)",
