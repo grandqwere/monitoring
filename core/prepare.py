@@ -23,6 +23,59 @@ def _to_num(s: pd.Series) -> pd.Series:
             return s
     return s
 
+
+def _parse_time_first_col(col: pd.Series) -> pd.Series:
+    """Парсим первый столбец как время максимально детерминированно.
+
+    В реальных выгрузках встречается формат:
+      YYYY-MM-DD HH:MM:SS,ffff
+    где дробная часть секунды идёт через запятую и чаще всего имеет 4 знака (1e-4 сек).
+
+    Важно: авто-парсинг pandas/dateutil может "съедать" дробную часть, превращая разные
+    значения времени в одинаковые секунды -> появляются дубликаты индекса и «скачки» на графике.
+    """
+    # уже datetime -> как есть
+    if pd.api.types.is_datetime64_any_dtype(col):
+        return col
+
+    # 1) пробуем строгий парсинг "YYYY-MM-DD[ T]HH:MM:SS[,.]frac"
+    s = col.astype(str).str.strip()
+    m = s.str.match(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[,.]\d+)?$", na=False)
+    if m.mean() >= 0.8:
+        s2 = s.str.replace("T", " ", regex=False)
+        ex = s2.str.extract(
+            r"^(?P<base>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:[,.](?P<frac>\d+))?$"
+        )
+        base = ex["base"]
+        frac = ex["frac"].fillna("0")
+        # frac хранит ДОЛЮ секунды (не микросекунды): дополняем справа до 6 знаков
+        frac = frac.str.slice(0, 6).str.ljust(6, "0")
+        norm = base + "." + frac
+        ts_try = pd.to_datetime(norm, format="%Y-%m-%d %H:%M:%S.%f", errors="coerce", utc=False)
+        if ts_try.notna().sum() >= len(s) * 0.8:
+            return ts_try
+
+    # 2) fallback: штатный авто-парсинг
+    ts = pd.to_datetime(
+        col,
+        errors="coerce",
+        infer_datetime_format=True,
+        utc=False,
+    )
+
+    # 3) если авто-парсинг не сработал (редко), пробуем секунды от эпохи
+    if ts.notna().sum() < len(col) * 0.8:
+        try:
+            ts2 = pd.to_datetime(col, unit="s", errors="coerce", utc=False)
+            if ts2.notna().sum() >= len(col) * 0.8:
+                ts = ts2
+        except Exception:
+            pass
+
+    return ts
+
+
+
 def normalize(df: pd.DataFrame) -> pd.DataFrame:
     """
     • Индекс времени берём ИСКЛЮЧИТЕЛЬНО из ПЕРВОГО столбца.
@@ -37,20 +90,7 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
 
     # 1) индекс времени — первый столбец файла
     time_col = df.columns[0]
-    ts = pd.to_datetime(
-        df[time_col],
-        errors="coerce",
-        infer_datetime_format=True,
-        utc=False,
-    )
-    # если авто-парсинг не сработал (редко), пробуем секунды от эпохи
-    if ts.notna().sum() < len(df) * 0.8:
-        try:
-            ts2 = pd.to_datetime(df[time_col], unit="s", errors="coerce", utc=False)
-            if ts2.notna().sum() >= len(df) * 0.8:
-                ts = ts2
-        except Exception:
-            pass
+    ts = _parse_time_first_col(df[time_col]
 
     # Удаляем строки, где время не распарсилось (NaT),
     # иначе ресемплинг/агрегация может вести себя некорректно.
