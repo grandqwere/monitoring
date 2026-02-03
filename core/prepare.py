@@ -90,7 +90,7 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
 
     # 1) индекс времени — первый столбец файла
     time_col = df.columns[0]
-    ts = _parse_time_first_col(df[time_col]
+    ts = _parse_time_first_col(df[time_col])
 
     # Удаляем строки, где время не распарсилось (NaT),
     # иначе ресемплинг/агрегация может вести себя некорректно.
