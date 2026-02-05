@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import time
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
@@ -247,6 +248,54 @@ def _day_signature(client, bucket: str, project_prefix: str, day_str: str) -> Di
         "max_last_modified": max_lm_iso,
     }
 
+
+
+def _input_manifest_signature(client, bucket: str, project_prefix: str) -> Dict[str, object]:
+    """
+    Глобальный отпечаток входных данных проекта по всем CSV в <project>/All/.
+
+    Нужен для детекта ЛЮБЫХ изменений во входе (добавление/удаление/перезапись файла)
+    вне зависимости от дня. Строится из списка объектов (key, size, etag, last_modified),
+    отсортированного по key, и SHA-256 хэша канонического представления.
+    """
+    prefix = f"{project_prefix}All/"
+    objs = _s3_list_objects(client, bucket, prefix=prefix)
+    csv_objs = [o for o in objs if (o.get("Key") or "").lower().endswith(".csv")]
+
+    # Канонический список строк, детерминированный порядок по key
+    entries: List[str] = []
+    max_lm = None
+    for o in csv_objs:
+        key = str(o.get("Key") or "")
+        size = int(o.get("Size") or 0)
+        etag = str(o.get("ETag") or "").strip().strip('"')
+        lm = o.get("LastModified")
+        if isinstance(lm, datetime):
+            # нормализуем к UTC и убираем tzinfo для стабильного ISO
+            lm_utc = lm.astimezone(timezone.utc).replace(tzinfo=None)
+            lm_iso = lm_utc.isoformat(timespec="seconds")
+            if max_lm is None or lm > max_lm:
+                max_lm = lm
+        else:
+            lm_iso = ""
+        entries.append(f"{key}\t{size}\t{etag}\t{lm_iso}")
+
+    entries.sort()
+
+    h = hashlib.sha256()
+    for line in entries:
+        h.update(line.encode("utf-8"))
+        h.update(b"\n")
+
+    max_lm_iso = ""
+    if isinstance(max_lm, datetime):
+        max_lm_iso = max_lm.astimezone(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
+
+    return {
+        "hash": h.hexdigest(),
+        "file_count": int(len(csv_objs)),
+        "max_last_modified": max_lm_iso,
+    }
 
 # -------------------- Календарь (общий + региональный) --------------------
 
@@ -558,21 +607,13 @@ def _recompute_project(
         return "skipped_no_days"
 
     sig = _day_signature(client, bucket, project_prefix, last_day)
+    input_sig = _input_manifest_signature(client, bucket, project_prefix)
     state = _read_state(client, bucket, project_prefix)
 
     agg_minutes = _get_agg_minutes_for_project(client, bucket, project_prefix)
 
-    prev_day = str(state.get("last_day") or "")
-    prev_count = int(state.get("last_day_file_count") or 0)
-    prev_lm = str(state.get("last_day_max_last_modified") or "")
-    prev_max_key = str(state.get("last_day_max_key") or "")
-
-    same_input = (
-        prev_day == sig["day"]
-        and prev_count == int(sig["file_count"])
-        and prev_lm == str(sig["max_last_modified"])
-        and prev_max_key == str(sig["max_key"])
-    )
+    prev_hash = str(state.get("input_manifest_hash") or "")
+    same_input = (prev_hash != "" and prev_hash == str(input_sig.get("hash") or ""))
 
     prev_target = str(state.get("target_column") or "")
     prev_agg = int(state.get("agg_minutes") or 0)
@@ -645,8 +686,11 @@ def _recompute_project(
     _write_quantile_csv(client, bucket, project_prefix, "weekend.csv", q_weekend, agg_minutes=agg_minutes)
 
     new_state = {
-        "schema_version": 2,
+        "schema_version": 3,
         "computed_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "input_manifest_hash": str(input_sig.get("hash") or ""),
+        "input_manifest_file_count": int(input_sig.get("file_count") or 0),
+        "input_manifest_max_last_modified": str(input_sig.get("max_last_modified") or ""),
         "last_day": sig["day"],
         "last_day_file_count": int(sig["file_count"]),
         "last_day_max_key": str(sig["max_key"]),
