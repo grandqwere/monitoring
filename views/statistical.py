@@ -453,7 +453,7 @@ def render_statistical_mode() -> None:
     if df_weekend is not None and not df_weekend.empty:
         fig_we = _make_figure(
             df_weekend,
-            title="Выходные/праздничные",
+            title="Выходные/праздничные дни",
             agg_minutes=agg_minutes,
             target_col=target_col,
             enabled=enabled,
