@@ -41,6 +41,7 @@ AGG_MINUTES_FALLBACK = 5
 PROCESS_SETTINGS_KEY = "plot_agg_minutes"
 OUTAGE_CURRENT_COLUMNS: Tuple[str, str, str] = ("Ipeak_L1", "Ipeak_L2", "Ipeak_L3")
 OUTAGE_CURRENT_THRESHOLD_A = 1.0
+EXCLUDED_PROJECT_BASE_NAMES: Tuple[str, ...] = ("0.0",)
 
 # Регэкспы
 PROJECT_DIR_RE = re.compile(r".*\(\d+\)$")
@@ -144,10 +145,23 @@ def _s3_prefix_has_any_object(client, bucket: str, prefix: str) -> bool:
 
 # -------------------- Поиск проектов и дней --------------------
 
+def _is_processable_project_name(name: str) -> bool:
+    """
+    Проверяет, можно ли обрабатывать проектную папку верхнего уровня.
+
+    Обрабатываются папки вида 'Name(123)', кроме служебных папок с базовым именем
+    '0.0', например '0.0(1)' или '0.0(187)'.
+    """
+    if not PROJECT_DIR_RE.match(name):
+        return False
+
+    base_name = name.split("(", 1)[0].strip()
+    return base_name not in EXCLUDED_PROJECT_BASE_NAMES
+
 def _discover_projects(client, bucket: str) -> List[str]:
     """
     Возвращает список project_prefix вида 'Name(123)/' на верхнем уровне бакета.
-    Берём только те, чьё имя содержит (...) с числом внутри, и у которых есть 'All/'.
+    Берём только обрабатываемые проекты, у которых есть 'All/'.
     """
     projects: List[str] = []
     # Основной путь: через Delimiter "/"
@@ -155,7 +169,7 @@ def _discover_projects(client, bucket: str) -> List[str]:
         cps = _s3_list_common_prefixes(client, bucket, prefix="", delimiter="/")
         for p in cps:
             name = p.rstrip("/")
-            if not PROJECT_DIR_RE.match(name):
+            if not _is_processable_project_name(name):
                 continue
             if _s3_prefix_has_any_object(client, bucket, p + "All/"):
                 projects.append(p)
@@ -173,7 +187,7 @@ def _discover_projects(client, bucket: str) -> List[str]:
             if not m:
                 continue
             root = m.group(1)
-            if PROJECT_DIR_RE.match(root):
+            if _is_processable_project_name(root):
                 seen.add(root + "/")
         projects = sorted(seen)
         return projects
