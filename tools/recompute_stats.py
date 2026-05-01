@@ -39,6 +39,8 @@ PERCENTILES: List[Tuple[float, str]] = [
 
 AGG_MINUTES_FALLBACK = 5
 PROCESS_SETTINGS_KEY = "plot_agg_minutes"
+OUTAGE_CURRENT_COLUMNS: Tuple[str, str, str] = ("Ipeak_L1", "Ipeak_L2", "Ipeak_L3")
+OUTAGE_CURRENT_THRESHOLD_A = 1.0
 
 # Регэкспы
 PROJECT_DIR_RE = re.compile(r".*\(\d+\)$")
@@ -301,8 +303,10 @@ def _input_manifest_signature(client, bucket: str, project_prefix: str) -> Dict[
 
 def _parse_calendar_days(obj: dict) -> Set[date]:
     """
-    Из JSON календаря берём months[].days, парсим числа (игнорируем суффиксы '*' '+').
-    Возвращаем set(date(year, month, day)).
+    Из JSON календаря берём months[].days и возвращаем даты выходных/праздников.
+
+    Суффикс '+' не меняет обработку: день считается выходным/праздничным.
+    Суффикс '*' означает рабочий день, поэтому такая дата не попадает в результат.
     """
     year = int(obj.get("year"))
     out: Set[date] = set()
@@ -317,6 +321,8 @@ def _parse_calendar_days(obj: dict) -> Set[date]:
         for token in days_str.split(","):
             t = token.strip()
             if not t:
+                continue
+            if t.endswith("*"):
                 continue
             mm = re.match(r"^(\d+)", t)
             if not mm:
@@ -403,6 +409,39 @@ def _read_csv_from_bytes(data: bytes) -> pd.DataFrame:
     # 2) fallback
     return pd.read_csv(io.BytesIO(data), sep=None, engine="python", encoding="utf-8-sig")
 
+def _apply_outage_filter(df: pd.DataFrame, target_col: str) -> pd.DataFrame:
+    """
+    Исключает из расчёта точки отключения по трём фазным токам.
+
+    Точка считается отключением, если все токи Ipeak_L1/Ipeak_L2/Ipeak_L3 строго
+    меньше OUTAGE_CURRENT_THRESHOLD_A. В таких строках целевой столбец заменяется
+    на NaN, чтобы точка не участвовала в средних и перцентилях.
+    """
+    if any(col not in df.columns for col in OUTAGE_CURRENT_COLUMNS):
+        return df
+
+    currents = df.loc[:, list(OUTAGE_CURRENT_COLUMNS)].apply(pd.to_numeric, errors="coerce")
+    outage_mask = currents.lt(float(OUTAGE_CURRENT_THRESHOLD_A)).all(axis=1)
+    if not bool(outage_mask.any()):
+        return df
+
+    out = df.copy()
+    out.loc[outage_mask, target_col] = np.nan
+    return out
+
+def _mean_interval_without_nan(values: pd.Series) -> float:
+    """
+    Возвращает среднее интервала только если в нём нет NaN.
+
+    Если хотя бы одна точка интервала исключена или не распознана как число, весь
+    интервал считается непригодным для статистики и возвращается NaN.
+    """
+    if values.isna().any():
+        return float("nan")
+    if values.empty:
+        return float("nan")
+    return float(values.mean())
+
 def _read_day_dataframe(
     client,
     bucket: str,
@@ -412,6 +451,7 @@ def _read_day_dataframe(
 ) -> pd.DataFrame:
     """
     Читает все CSV под <project>/All/<day>/..., собирает (timestamp, target_col).
+    Точки отключения по трём фазным токам исключает из target_col.
     Битые/нестандартные файлы пропускает.
     """
     prefix = f"{project_prefix}All/{day_str}/"
@@ -435,14 +475,18 @@ def _read_day_dataframe(
             if target_col not in df.columns:
                 continue
 
-            sub = df[[TIME_COLUMN, target_col]].copy()
+            cols = [TIME_COLUMN, target_col] + [
+                col for col in OUTAGE_CURRENT_COLUMNS if col in df.columns
+            ]
+            sub = df[cols].copy()
             sub[TIME_COLUMN] = pd.to_datetime(sub[TIME_COLUMN], errors="coerce")
             sub = sub.dropna(subset=[TIME_COLUMN])
             if sub.empty:
                 continue
 
             sub[target_col] = pd.to_numeric(sub[target_col], errors="coerce")
-            parts.append(sub)
+            sub = _apply_outage_filter(sub, target_col)
+            parts.append(sub[[TIME_COLUMN, target_col]])
         except Exception:
             continue
 
@@ -462,7 +506,10 @@ def _build_day_series(
     target_col: str,
 ) -> pd.Series:
     """
-    Возвращает суточный ряд (index: 2000-01-01 00:00.., freq=agg_minutes) с mean по интервалам.
+    Возвращает суточный ряд (index: 2000-01-01 00:00.., freq=agg_minutes).
+
+    По каждому интервалу берётся среднее только при отсутствии NaN внутри него.
+    Если в интервале есть хотя бы один NaN, весь интервал становится NaN.
     """
     # день по имени папки
     day_dt = pd.to_datetime(day_str, format="%Y.%m.%d", errors="coerce")
@@ -484,7 +531,7 @@ def _build_day_series(
 
     s0 = df.set_index(TIME_COLUMN)[target_col]
     s0 = pd.to_numeric(s0, errors="coerce")
-    s_m = s0.resample(f"{agg_minutes}min").mean()
+    s_m = s0.resample(f"{agg_minutes}min").agg(_mean_interval_without_nan)
     s_m = s_m.reindex(bins)
     s_m.index = x
     s_m.name = day_str
