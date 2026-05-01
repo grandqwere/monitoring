@@ -39,7 +39,7 @@ PERCENTILES: List[Tuple[float, str]] = [
 
 AGG_MINUTES_FALLBACK = 5
 PROCESS_SETTINGS_KEY = "plot_agg_minutes"
-OUTAGE_CURRENT_COLUMNS: Tuple[str, str, str] = ("Ipeak_L1", "Ipeak_L2", "Ipeak_L3")
+OUTAGE_CURRENT_COLUMNS: Tuple[str, str, str] = ("Irms_L1", "Irms_L2", "Irms_L3")
 OUTAGE_CURRENT_THRESHOLD_A = 1.0
 EXCLUDED_PROJECT_BASE_NAMES: Tuple[str, ...] = ("0.0",)
 
@@ -427,7 +427,7 @@ def _apply_outage_filter(df: pd.DataFrame, target_col: str) -> pd.DataFrame:
     """
     Исключает из расчёта точки отключения по трём фазным токам.
 
-    Точка считается отключением, если все токи Ipeak_L1/Ipeak_L2/Ipeak_L3 строго
+    Точка считается отключением, если все токи Irms_L1/Irms_L2/Irms_L3 строго
     меньше OUTAGE_CURRENT_THRESHOLD_A. В таких строках целевой столбец заменяется
     на NaN, чтобы точка не участвовала в средних и перцентилях.
     """
@@ -679,12 +679,17 @@ def _recompute_project(
     prev_target = str(state.get("target_column") or "")
     prev_agg = int(state.get("agg_minutes") or 0)
     prev_percentiles = list(state.get("percentiles") or [])
+    prev_outage_current_columns = list(state.get("outage_current_columns") or [])
+    prev_outage_current_threshold_a = float(state.get("outage_current_threshold_a") or 0.0)
     cur_percentiles = [float(p) for p, _ in PERCENTILES]
+    cur_outage_current_columns = list(OUTAGE_CURRENT_COLUMNS)
 
     same_params = (
         prev_target == TARGET_COLUMN
         and prev_agg == int(agg_minutes)
         and prev_percentiles == cur_percentiles
+        and prev_outage_current_columns == cur_outage_current_columns
+        and prev_outage_current_threshold_a == float(OUTAGE_CURRENT_THRESHOLD_A)
     )
 
     # Если выходных файлов нет (или они пустые), пересчёт обязателен
@@ -747,7 +752,7 @@ def _recompute_project(
     _write_quantile_csv(client, bucket, project_prefix, "weekend.csv", q_weekend, agg_minutes=agg_minutes)
 
     new_state = {
-        "schema_version": 3,
+        "schema_version": 4,
         "computed_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "input_manifest_hash": str(input_sig.get("hash") or ""),
         "input_manifest_file_count": int(input_sig.get("file_count") or 0),
@@ -760,6 +765,8 @@ def _recompute_project(
         "target_column": TARGET_COLUMN,
         "percentiles": [float(p) for p, _ in PERCENTILES],
         "percentile_labels": [label for _, label in PERCENTILES],
+        "outage_current_columns": list(OUTAGE_CURRENT_COLUMNS),
+        "outage_current_threshold_a": float(OUTAGE_CURRENT_THRESHOLD_A),
         "days_total": int(len(days)),
         "days_weekday": int(len(weekday_series)),
         "days_weekend": int(len(weekend_series)),
