@@ -1,10 +1,24 @@
-name: Aggregate KMS All CSV (hourly)
+name: Aggregate KMS All CSV (hourly missing only)
 
 "on":
   workflow_dispatch:
+    inputs:
+      rebuild_mode:
+        description: "What to aggregate"
+        required: true
+        default: "missing_only"
+        type: choice
+        options:
+          - "missing_only"
+          - "missing_or_source_newer"
+          - "all_complete"
+      max_files:
+        description: "Maximum files to aggregate in one run, 0 = no limit"
+        required: true
+        default: "0"
   schedule:
-    # GitHub Actions cron is UTC. Runs every hour at minute 07.
-    - cron: "7 * * * *"
+    # GitHub Actions cron is UTC. Runs every hour at minute 05.
+    - cron: "5 * * * *"
 
 concurrency:
   group: aggregate-kms-all
@@ -32,8 +46,12 @@ jobs:
       SOURCE_PREFIX_2: "KMS.13(85)/All/"
       SOURCE_PREFIX_3: "KMS.210(96)/All/"
       SOURCE_PREFIX_4: "KMS.22(121)/All/"
-      OUTPUT_PREFIX: "kms.all(0)/"
+      OUTPUT_PREFIX: "kms.all(0)/All/"
       WORK_DIR: "_kms_aggregate_work"
+
+      # Schedule uses default values. Manual run may override them.
+      REBUILD_MODE: ${{ github.event.inputs.rebuild_mode || 'missing_only' }}
+      MAX_FILES: ${{ github.event.inputs.max_files || '0' }}
 
     steps:
       - name: Checkout
@@ -75,36 +93,11 @@ jobs:
             aws configure set default.s3.signature_version "${S3_SIGNATURE_VERSION}"
           fi
 
-      - name: Download All hourly CSV files
+      - name: Aggregate missing All hourly CSV files
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.S3_REGION }}
-        run: |
-          set -euo pipefail
-
-          aws_s3() {
-            if [ -n "${S3_ENDPOINT_URL:-}" ]; then
-              aws --endpoint-url "${S3_ENDPOINT_URL}" "$@"
-            else
-              aws "$@"
-            fi
-          }
-
-          rm -rf "${WORK_DIR}"
-          mkdir -p \
-            "${WORK_DIR}/input/cell1/All" \
-            "${WORK_DIR}/input/cell2/All" \
-            "${WORK_DIR}/input/cell3/All" \
-            "${WORK_DIR}/input/cell4/All" \
-            "${WORK_DIR}/output"
-
-          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_1}" "${WORK_DIR}/input/cell1/All" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
-          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_2}" "${WORK_DIR}/input/cell2/All" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
-          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_3}" "${WORK_DIR}/input/cell3/All" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
-          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_4}" "${WORK_DIR}/input/cell4/All" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
-
-      - name: Aggregate All hourly CSV files
         run: |
           set -euo pipefail
 
@@ -115,66 +108,197 @@ jobs:
 
           python -m py_compile tools/aggregate_object_csv.py
 
+          rm -rf "${WORK_DIR}"
+          mkdir -p "${WORK_DIR}/input" "${WORK_DIR}/output"
+
           python - <<'PY'
+          from __future__ import annotations
+
+          from datetime import datetime
           from pathlib import Path
+          import json
           import os
           import re
           import subprocess
           import sys
 
+          bucket = os.environ["S3_BUCKET"]
+          endpoint_url = os.environ.get("S3_ENDPOINT_URL", "")
           work_dir = Path(os.environ["WORK_DIR"])
-          input_dirs = [
-              work_dir / "input" / "cell1",
-              work_dir / "input" / "cell2",
-              work_dir / "input" / "cell3",
-              work_dir / "input" / "cell4",
-          ]
-          output_dir = work_dir / "output"
-          output_dir.mkdir(parents=True, exist_ok=True)
+          rebuild_mode = os.environ.get("REBUILD_MODE", "missing_only")
+          max_files = int(os.environ.get("MAX_FILES", "0"))
 
-          hourly_all_re = re.compile(
-              r"^All/\d{4}\.\d{2}\.\d{2}/All-\d{4}\.\d{2}\.\d{2}-\d{2}\.00\.csv$",
+          source_prefixes = [
+              os.environ["SOURCE_PREFIX_1"],
+              os.environ["SOURCE_PREFIX_2"],
+              os.environ["SOURCE_PREFIX_3"],
+              os.environ["SOURCE_PREFIX_4"],
+          ]
+          output_prefix = os.environ["OUTPUT_PREFIX"]
+
+          hourly_re = re.compile(
+              r"^\d{4}\.\d{2}\.\d{2}/All-\d{4}\.\d{2}\.\d{2}-\d{2}\.00\.csv$",
               re.IGNORECASE,
           )
 
-          rel_paths: set[Path] = set()
-          ignored = 0
+          if rebuild_mode not in {"missing_only", "missing_or_source_newer", "all_complete"}:
+              raise SystemExit(f"Unsupported REBUILD_MODE: {rebuild_mode}")
 
-          for input_dir in input_dirs:
-              all_dir = input_dir / "All"
-              if not all_dir.exists():
-                  continue
+          def norm_prefix(prefix: str) -> str:
+              return prefix if prefix.endswith("/") else prefix + "/"
 
-              for path in all_dir.rglob("*"):
-                  if not path.is_file() or path.suffix.lower() != ".csv":
+          source_prefixes = [norm_prefix(p) for p in source_prefixes]
+          output_prefix = norm_prefix(output_prefix)
+
+          def aws_base() -> list[str]:
+              cmd = ["aws"]
+              if endpoint_url:
+                  cmd += ["--endpoint-url", endpoint_url]
+              return cmd
+
+          def aws_run(*args: str) -> None:
+              subprocess.run(aws_base() + list(args), check=True)
+
+          def aws_json(*args: str) -> dict:
+              result = subprocess.run(
+                  aws_base() + list(args),
+                  check=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  text=True,
+              )
+              return json.loads(result.stdout or "{}")
+
+          def parse_dt(value: str) -> datetime:
+              # AWS returns ISO datetime, usually like 2026-07-03T20:00:10+00:00
+              return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+          def list_hourly(prefix: str) -> dict[str, dict]:
+              items: dict[str, dict] = {}
+              token: str | None = None
+
+              while True:
+                  args = [
+                      "s3api",
+                      "list-objects-v2",
+                      "--bucket",
+                      bucket,
+                      "--prefix",
+                      prefix,
+                      "--output",
+                      "json",
+                  ]
+                  if token:
+                      args += ["--continuation-token", token]
+
+                  data = aws_json(*args)
+
+                  for obj in data.get("Contents", []):
+                      key = obj.get("Key", "")
+                      if not key.startswith(prefix):
+                          continue
+
+                      rel = key[len(prefix):]
+                      if not hourly_re.match(rel):
+                          continue
+
+                      items[rel] = {
+                          "key": key,
+                          "last_modified": parse_dt(obj["LastModified"]),
+                          "size": int(obj.get("Size", 0)),
+                      }
+
+                  if not data.get("IsTruncated"):
+                      break
+                  token = data.get("NextContinuationToken")
+                  if not token:
+                      break
+
+              return items
+
+          print(f"Mode: {rebuild_mode}")
+          print(f"Max files per run: {max_files if max_files else 'no limit'}")
+
+          source_maps = []
+          for index, prefix in enumerate(source_prefixes, start=1):
+              items = list_hourly(prefix)
+              source_maps.append(items)
+              print(f"Source {index}: {prefix} -> hourly All CSV files: {len(items)}")
+
+          output_map = list_hourly(output_prefix)
+          print(f"Output: {output_prefix} -> hourly All CSV files: {len(output_map)}")
+
+          if not source_maps or any(not m for m in source_maps):
+              raise SystemExit("At least one source folder has no hourly All CSV files")
+
+          common = set(source_maps[0])
+          for items in source_maps[1:]:
+              common &= set(items)
+
+          if not common:
+              raise SystemExit("No hourly All CSV file exists in all 4 source folders")
+
+          candidates: list[tuple[str, str]] = []
+          skipped_existing = 0
+          skipped_fresh_output = 0
+
+          for rel in sorted(common):
+              src_items = [items[rel] for items in source_maps]
+              newest_source = max(item["last_modified"] for item in src_items)
+
+              out_item = output_map.get(rel)
+              output_present = bool(out_item and int(out_item.get("size", 0)) > 0)
+
+              if rebuild_mode == "missing_only":
+                  if output_present:
+                      skipped_existing += 1
                       continue
+                  candidates.append((rel, "missing output"))
 
-                  rel_path = path.relative_to(input_dir)
-                  rel_posix = rel_path.as_posix()
-
-                  if hourly_all_re.match(rel_posix):
-                      rel_paths.add(rel_path)
+              elif rebuild_mode == "missing_or_source_newer":
+                  if not output_present:
+                      candidates.append((rel, "missing output"))
+                  elif newest_source > out_item["last_modified"]:
+                      candidates.append((rel, "source newer than output"))
                   else:
-                      ignored += 1
-                      print(f"IGNORE non-hourly-All CSV: {rel_posix}")
+                      skipped_fresh_output += 1
 
-          if not rel_paths:
-              raise SystemExit("No hourly All CSV files found in source folders")
+              elif rebuild_mode == "all_complete":
+                  candidates.append((rel, "all_complete mode"))
+
+          if max_files > 0:
+              candidates = candidates[:max_files]
+
+          print(f"Complete 4-source hourly groups: {len(common)}")
+          print(f"Skipped existing outputs: {skipped_existing}")
+          print(f"Skipped fresh outputs: {skipped_fresh_output}")
+          print(f"Files selected for aggregation: {len(candidates)}")
+
+          if not candidates:
+              print("Nothing to aggregate. Exit successfully.")
+              raise SystemExit(0)
 
           aggregated = 0
-          skipped = 0
 
-          for rel_path in sorted(rel_paths):
-              sources = [input_dir / rel_path for input_dir in input_dirs]
-              missing = [str(path) for path in sources if not path.exists()]
-              if missing:
-                  skipped += 1
-                  print(f"SKIP: {rel_path.as_posix()} is not present in all 4 source folders")
-                  for path in missing:
-                      print(f"  missing: {path}")
-                  continue
+          for rel, reason in candidates:
+              print(f"AGGREGATE: {rel} ({reason})")
 
-              out_path = output_dir / rel_path
+              sources: list[Path] = []
+              for index, prefix in enumerate(source_prefixes, start=1):
+                  src_key = prefix + rel
+                  local_path = work_dir / "input" / f"cell{index}" / "All" / rel
+                  local_path.parent.mkdir(parents=True, exist_ok=True)
+
+                  aws_run(
+                      "s3",
+                      "cp",
+                      f"s3://{bucket}/{src_key}",
+                      str(local_path),
+                      "--only-show-errors",
+                  )
+                  sources.append(local_path)
+
+              out_path = work_dir / "output" / "All" / rel
               out_path.parent.mkdir(parents=True, exist_ok=True)
 
               cmd = [
@@ -185,35 +309,17 @@ jobs:
                   *(str(path) for path in sources),
               ]
               subprocess.run(cmd, check=True)
+
+              dst_key = output_prefix + rel
+              aws_run(
+                  "s3",
+                  "cp",
+                  str(out_path),
+                  f"s3://{bucket}/{dst_key}",
+                  "--only-show-errors",
+              )
+
               aggregated += 1
 
-          print(f"Aggregated hourly All CSV files: {aggregated}")
-          print(f"Skipped incomplete hourly All file groups: {skipped}")
-          print(f"Ignored non-hourly-All CSV files: {ignored}")
-
-          if aggregated == 0:
-              raise SystemExit("No complete 4-file hourly All CSV groups were aggregated")
+          print(f"Aggregated and uploaded files: {aggregated}")
           PY
-
-      - name: Upload aggregated All CSV files
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ secrets.S3_REGION }}
-        run: |
-          set -euo pipefail
-
-          aws_s3() {
-            if [ -n "${S3_ENDPOINT_URL:-}" ]; then
-              aws --endpoint-url "${S3_ENDPOINT_URL}" "$@"
-            else
-              aws "$@"
-            fi
-          }
-
-          if [ ! -d "${WORK_DIR}/output/All" ]; then
-            echo "No output All directory found: ${WORK_DIR}/output/All" >&2
-            exit 1
-          fi
-
-          aws_s3 s3 sync "${WORK_DIR}/output/All" "s3://${S3_BUCKET}/${OUTPUT_PREFIX}All/" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
