@@ -1,0 +1,194 @@
+name: Aggregate KMS object CSV
+
+on:
+  workflow_dispatch:
+  schedule:
+    # cron in GitHub Actions is UTC
+    - cron: "27 3 * * *"
+
+concurrency:
+  group: aggregate-kms-all
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  aggregate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    env:
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_REGION: ${{ secrets.S3_REGION }}
+      S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL }}
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      S3_PATH_STYLE: ${{ secrets.S3_PATH_STYLE }}
+      S3_SIGNATURE_VERSION: ${{ secrets.S3_SIGNATURE_VERSION }}
+      PYTHONUNBUFFERED: "1"
+
+      SOURCE_PREFIX_1: "KMS.110(129)/"
+      SOURCE_PREFIX_2: "KMS.13(85)/"
+      SOURCE_PREFIX_3: "KMS.210(96)/"
+      SOURCE_PREFIX_4: "KMS.22(121)/"
+      OUTPUT_PREFIX: "kms.all(0)/"
+      WORK_DIR: "_kms_aggregate_work"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install awscli
+
+      - name: Configure S3 CLI
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.S3_REGION }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${S3_BUCKET:-}" ]; then
+            echo "S3_BUCKET secret is empty" >&2
+            exit 1
+          fi
+
+          case "${S3_PATH_STYLE:-}" in
+            true|True|TRUE|1|yes|Yes|YES)
+              aws configure set default.s3.addressing_style path
+              ;;
+          esac
+
+          if [ -n "${S3_SIGNATURE_VERSION:-}" ]; then
+            aws configure set default.s3.signature_version "${S3_SIGNATURE_VERSION}"
+          fi
+
+      - name: Download source CSV files
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.S3_REGION }}
+        run: |
+          set -euo pipefail
+
+          aws_s3() {
+            if [ -n "${S3_ENDPOINT_URL:-}" ]; then
+              aws --endpoint-url "${S3_ENDPOINT_URL}" "$@"
+            else
+              aws "$@"
+            fi
+          }
+
+          rm -rf "${WORK_DIR}"
+          mkdir -p \
+            "${WORK_DIR}/input/cell1" \
+            "${WORK_DIR}/input/cell2" \
+            "${WORK_DIR}/input/cell3" \
+            "${WORK_DIR}/input/cell4" \
+            "${WORK_DIR}/output"
+
+          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_1}" "${WORK_DIR}/input/cell1" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
+          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_2}" "${WORK_DIR}/input/cell2" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
+          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_3}" "${WORK_DIR}/input/cell3" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
+          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_4}" "${WORK_DIR}/input/cell4" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
+
+      - name: Run aggregate_object_csv.py
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "tools/aggregate_object_csv.py" ]; then
+            echo "File tools/aggregate_object_csv.py was not found" >&2
+            exit 1
+          fi
+
+          python -m py_compile tools/aggregate_object_csv.py
+
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import os
+
+          work_dir = Path(os.environ["WORK_DIR"])
+          input_dirs = [
+              work_dir / "input" / "cell1",
+              work_dir / "input" / "cell2",
+              work_dir / "input" / "cell3",
+              work_dir / "input" / "cell4",
+          ]
+          output_dir = work_dir / "output"
+          output_dir.mkdir(parents=True, exist_ok=True)
+
+          rel_paths: set[Path] = set()
+          for input_dir in input_dirs:
+              rel_paths.update(
+                  path.relative_to(input_dir)
+                  for path in input_dir.rglob("*")
+                  if path.is_file() and path.suffix.lower() == ".csv"
+              )
+
+          if not rel_paths:
+              raise SystemExit("No CSV files found in source folders")
+
+          aggregated = 0
+          skipped = 0
+
+          for rel_path in sorted(rel_paths):
+              sources = [input_dir / rel_path for input_dir in input_dirs]
+              missing = [str(path) for path in sources if not path.exists()]
+              if missing:
+                  skipped += 1
+                  print(f"SKIP: {rel_path} is not present in all 4 source folders")
+                  for path in missing:
+                      print(f"  missing: {path}")
+                  continue
+
+              out_path = output_dir / rel_path
+              out_path.parent.mkdir(parents=True, exist_ok=True)
+
+              cmd = [
+                  sys.executable,
+                  "tools/aggregate_object_csv.py",
+                  "--out",
+                  str(out_path),
+                  *(str(path) for path in sources),
+              ]
+              subprocess.run(cmd, check=True)
+              aggregated += 1
+
+          print(f"Aggregated CSV files: {aggregated}")
+          print(f"Skipped incomplete file groups: {skipped}")
+
+          if aggregated == 0:
+              raise SystemExit("No complete 4-file CSV groups were aggregated")
+          PY
+
+      - name: Upload aggregated CSV files
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.S3_REGION }}
+        run: |
+          set -euo pipefail
+
+          aws_s3() {
+            if [ -n "${S3_ENDPOINT_URL:-}" ]; then
+              aws --endpoint-url "${S3_ENDPOINT_URL}" "$@"
+            else
+              aws "$@"
+            fi
+          }
+
+          aws_s3 s3api put-object --bucket "${S3_BUCKET}" --key "${OUTPUT_PREFIX}" --body /dev/null >/dev/null
+          aws_s3 s3 sync "${WORK_DIR}/output" "s3://${S3_BUCKET}/${OUTPUT_PREFIX}" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
