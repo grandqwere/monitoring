@@ -1,9 +1,9 @@
-name: Aggregate KMS object CSV
+name: Aggregate KMS All CSV
 
-on:
+"on":
   workflow_dispatch:
   schedule:
-    # cron in GitHub Actions is UTC
+    # GitHub Actions cron is UTC
     - cron: "27 3 * * *"
 
 concurrency:
@@ -28,10 +28,10 @@ jobs:
       S3_SIGNATURE_VERSION: ${{ secrets.S3_SIGNATURE_VERSION }}
       PYTHONUNBUFFERED: "1"
 
-      SOURCE_PREFIX_1: "KMS.110(129)/"
-      SOURCE_PREFIX_2: "KMS.13(85)/"
-      SOURCE_PREFIX_3: "KMS.210(96)/"
-      SOURCE_PREFIX_4: "KMS.22(121)/"
+      SOURCE_PREFIX_1: "KMS.110(129)/All/"
+      SOURCE_PREFIX_2: "KMS.13(85)/All/"
+      SOURCE_PREFIX_3: "KMS.210(96)/All/"
+      SOURCE_PREFIX_4: "KMS.22(121)/All/"
       OUTPUT_PREFIX: "kms.all(0)/"
       WORK_DIR: "_kms_aggregate_work"
 
@@ -47,6 +47,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install awscli
@@ -74,7 +75,7 @@ jobs:
             aws configure set default.s3.signature_version "${S3_SIGNATURE_VERSION}"
           fi
 
-      - name: Download source CSV files
+      - name: Download All hourly CSV files
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
@@ -92,18 +93,18 @@ jobs:
 
           rm -rf "${WORK_DIR}"
           mkdir -p \
-            "${WORK_DIR}/input/cell1" \
-            "${WORK_DIR}/input/cell2" \
-            "${WORK_DIR}/input/cell3" \
-            "${WORK_DIR}/input/cell4" \
+            "${WORK_DIR}/input/cell1/All" \
+            "${WORK_DIR}/input/cell2/All" \
+            "${WORK_DIR}/input/cell3/All" \
+            "${WORK_DIR}/input/cell4/All" \
             "${WORK_DIR}/output"
 
-          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_1}" "${WORK_DIR}/input/cell1" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
-          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_2}" "${WORK_DIR}/input/cell2" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
-          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_3}" "${WORK_DIR}/input/cell3" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
-          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_4}" "${WORK_DIR}/input/cell4" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
+          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_1}" "${WORK_DIR}/input/cell1/All" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
+          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_2}" "${WORK_DIR}/input/cell2/All" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
+          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_3}" "${WORK_DIR}/input/cell3/All" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
+          aws_s3 s3 sync "s3://${S3_BUCKET}/${SOURCE_PREFIX_4}" "${WORK_DIR}/input/cell4/All" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
 
-      - name: Run aggregate_object_csv.py
+      - name: Aggregate All hourly CSV files
         run: |
           set -euo pipefail
 
@@ -116,9 +117,10 @@ jobs:
 
           python - <<'PY'
           from pathlib import Path
+          import os
+          import re
           import subprocess
           import sys
-          import os
 
           work_dir = Path(os.environ["WORK_DIR"])
           input_dirs = [
@@ -130,16 +132,34 @@ jobs:
           output_dir = work_dir / "output"
           output_dir.mkdir(parents=True, exist_ok=True)
 
+          hourly_all_re = re.compile(
+              r"^All/\d{4}\.\d{2}\.\d{2}/All-\d{4}\.\d{2}\.\d{2}-\d{2}\.00\.csv$",
+              re.IGNORECASE,
+          )
+
           rel_paths: set[Path] = set()
+          ignored = 0
+
           for input_dir in input_dirs:
-              rel_paths.update(
-                  path.relative_to(input_dir)
-                  for path in input_dir.rglob("*")
-                  if path.is_file() and path.suffix.lower() == ".csv"
-              )
+              all_dir = input_dir / "All"
+              if not all_dir.exists():
+                  continue
+
+              for path in all_dir.rglob("*"):
+                  if not path.is_file() or path.suffix.lower() != ".csv":
+                      continue
+
+                  rel_path = path.relative_to(input_dir)
+                  rel_posix = rel_path.as_posix()
+
+                  if hourly_all_re.match(rel_posix):
+                      rel_paths.add(rel_path)
+                  else:
+                      ignored += 1
+                      print(f"IGNORE non-hourly-All CSV: {rel_posix}")
 
           if not rel_paths:
-              raise SystemExit("No CSV files found in source folders")
+              raise SystemExit("No hourly All CSV files found in source folders")
 
           aggregated = 0
           skipped = 0
@@ -149,7 +169,7 @@ jobs:
               missing = [str(path) for path in sources if not path.exists()]
               if missing:
                   skipped += 1
-                  print(f"SKIP: {rel_path} is not present in all 4 source folders")
+                  print(f"SKIP: {rel_path.as_posix()} is not present in all 4 source folders")
                   for path in missing:
                       print(f"  missing: {path}")
                   continue
@@ -167,14 +187,15 @@ jobs:
               subprocess.run(cmd, check=True)
               aggregated += 1
 
-          print(f"Aggregated CSV files: {aggregated}")
-          print(f"Skipped incomplete file groups: {skipped}")
+          print(f"Aggregated hourly All CSV files: {aggregated}")
+          print(f"Skipped incomplete hourly All file groups: {skipped}")
+          print(f"Ignored non-hourly-All CSV files: {ignored}")
 
           if aggregated == 0:
-              raise SystemExit("No complete 4-file CSV groups were aggregated")
+              raise SystemExit("No complete 4-file hourly All CSV groups were aggregated")
           PY
 
-      - name: Upload aggregated CSV files
+      - name: Upload aggregated All CSV files
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
@@ -191,4 +212,5 @@ jobs:
           }
 
           aws_s3 s3api put-object --bucket "${S3_BUCKET}" --key "${OUTPUT_PREFIX}" --body /dev/null >/dev/null
-          aws_s3 s3 sync "${WORK_DIR}/output" "s3://${S3_BUCKET}/${OUTPUT_PREFIX}" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
+          aws_s3 s3api put-object --bucket "${S3_BUCKET}" --key "${OUTPUT_PREFIX}All/" --body /dev/null >/dev/null
+          aws_s3 s3 sync "${WORK_DIR}/output/All" "s3://${S3_BUCKET}/${OUTPUT_PREFIX}All/" --only-show-errors --exclude "*" --include "*.csv" --include "*.CSV"
