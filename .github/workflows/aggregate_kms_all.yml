@@ -3,8 +3,8 @@ name: Aggregate KMS All CSV
 "on":
   workflow_dispatch:
   schedule:
-    # GitHub Actions cron is UTC
-    - cron: "27 3 * * *"
+    # GitHub Actions cron is UTC. Runs every hour at minute 07.
+    - cron: "7 * * * *"
 
 concurrency:
   group: aggregate-kms-all
