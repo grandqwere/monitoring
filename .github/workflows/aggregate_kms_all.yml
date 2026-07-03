@@ -1,4 +1,4 @@
-name: Aggregate KMS All CSV (hourly missing only)
+name: Aggregate KMS All CSV (hourly)
 
 "on":
   workflow_dispatch:
