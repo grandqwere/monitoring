@@ -15,7 +15,7 @@ from views.minutely import render_minutely_mode  # NEW
 from views.statistical import render_statistical_mode  # NEW
 from core.hour_loader import init_hour_state
 from core.minute_loader import init_minute_state  # NEW
-from core.data_io import read_text_s3, read_bytes_s3
+from core.data_io import read_text_s3, read_bytes_s3, s3_measurement_period_all
 from core.s3_paths import (
     build_root_key,
     build_all_key_for,
@@ -98,6 +98,9 @@ def _clear_all_caches():
         "__pending_minute_date", "__pending_minute_hour", "__pending_minute_minute",
         "__minute_picker_redraw",
         "refresh_minutely_all",
+
+        # header
+        "__measurement_period_all",
 
         # statistical
         "stat_cb_50", "stat_cb_90", "stat_cb_95", "stat_cb_99",
@@ -188,6 +191,30 @@ def _is_demo_mode() -> bool:
         return bool(demo_pref and curr_pref and curr_pref == demo_pref)
     except Exception:
         return False
+
+
+def _format_period_dt(dt) -> str:
+    """Форматирует дату и время периода измерений до минут."""
+    try:
+        return dt.strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        return ""
+
+
+def _measurement_period_text() -> str:
+    """Возвращает строку периода измерений для текущего объекта."""
+    if _is_demo_mode():
+        return ""
+
+    period = s3_measurement_period_all()
+    if not period:
+        return ""
+
+    start = _format_period_dt(period.get("start"))
+    end = _format_period_dt(period.get("end"))
+    if not start or not end:
+        return ""
+    return f"Период измерений: с {start} по {end}"
 
 
 def _day_folder(d) -> str:
@@ -306,6 +333,12 @@ def _build_zip_from_keys(items: list[tuple[str, str | None]]) -> bytes:
 
 
 st.markdown(f"<h3 style='margin:0'>{_current_title()}</h3>", unsafe_allow_html=True)
+measurement_period = _measurement_period_text()
+if measurement_period:
+    st.markdown(
+        f"<div style='font-size:0.86rem; line-height:1.25; margin:0.05rem 0 0.35rem 0; opacity:0.72;'>{measurement_period}</div>",
+        unsafe_allow_html=True,
+    )
 
 # Кнопка «Выйти» (без строки «Источник данных»)
 right = st.columns([0.8, 0.2])[1]
