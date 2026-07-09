@@ -10,6 +10,7 @@ from ui.refresh import refresh_bar
 from ui.picker import render_date_hour_picker
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
+from ui.date_format import format_date_hour_ru
 
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
@@ -25,16 +26,17 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
 
 def _load_with_status_set_only(date_obj, hour: int, *, status_area) -> bool:
     """Загрузить ТОЛЬКО этот час (очищая кэш). Статус — строго под пикером (status_area)."""
+    dt_label = format_date_hour_ru(date_obj, hour)
     with status_area.container():
-        with st.status(f"Готовим данные за {date_obj.isoformat()} {hour:02d}:00…", expanded=True) as status:
+        with st.status(f"Готовим данные за {dt_label}…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы: 0/1")
             ok = set_only_hour(date_obj, hour)
             prog.progress(100, text="Загружаем часы: 1/1")
             if ok:
                 status.update(state="complete")
             else:
-                status.update(label=f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00.", state="error")
-                st.warning(f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00.")
+                status.update(label=f"Отсутствуют данные за {dt_label}.", state="error")
+                st.warning(f"Отсутствуют данные за {dt_label}.")
     if not ok:
         st.session_state["loaded_hours"] = []
         st.session_state["hour_cache"] = {}
@@ -45,16 +47,17 @@ def _load_with_status_set_only(date_obj, hour: int, *, status_area) -> bool:
 
 def _load_with_status_append(date_obj, hour: int, *, status_area) -> bool:
     """Дозагрузить второй час. Статус — под пикером (status_area)."""
+    dt_label = format_date_hour_ru(date_obj, hour)
     with status_area.container():
-        with st.status(f"Готовим данные за {date_obj.isoformat()} {hour:02d}:00…", expanded=True) as status:
+        with st.status(f"Готовим данные за {dt_label}…", expanded=True) as status:
             prog = st.progress(0, text="Загружаем часы: 0/1")
             ok = append_hour(date_obj, hour)
             prog.progress(100, text="Загружаем часы: 1/1")
             if ok:
                 status.update(state="complete")
             else:
-                status.update(label=f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00 (дозагрузка).", state="error")
-                st.warning(f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:00 (дозагрузка).")
+                status.update(label=f"Отсутствуют данные за {dt_label} (дозагрузка).", state="error")
+                st.warning(f"Отсутствуют данные за {dt_label} (дозагрузка).")
     return ok
 
 
