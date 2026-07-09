@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import date
 import streamlit as st
 
+from ui.date_format import DATE_INPUT_FORMAT
+
 
 def _btn(col, label: str, key: str, primary: bool, on_click=None, args=()) -> bool:
     """Кнопка с подсветкой; поддерживает on_click/args для совместимости версий Streamlit."""
@@ -58,7 +60,7 @@ def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = 
         selected_date = st.date_input(
             "Дата",
             value=selected_date,
-            format="YYYY-MM-DD",
+            format=DATE_INPUT_FORMAT,
             key=f"{key_prefix}date_pick",
         )
         st.session_state["selected_minute_date"] = selected_date
