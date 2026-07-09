@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Dict
 
 import boto3
@@ -108,6 +108,155 @@ def _current_prefix_base() -> str:
     """Текущий префикс как 'prefix/' или ''."""
     curr = str(st.session_state.get("current_prefix", "") or "").strip().rstrip("/")
     return f"{curr}/" if curr else ""
+
+
+def _all_day_dates() -> list[date]:
+    """
+    Возвращает список дней, для которых есть папки или файлы в <prefix>/All/YYYY.MM.DD/.
+    """
+    client = _get_s3_client()
+    bucket = _bucket_name()
+    base = _current_prefix_base() + "All/"
+    dates: set[date] = set()
+    rx = re.compile(r"(?:^|/)All/(\d{4}\.\d{2}\.\d{2})/")
+
+    paginator = client.get_paginator("list_objects_v2")
+    try:
+        for page in paginator.paginate(Bucket=bucket, Prefix=base, Delimiter="/"):
+            for cp in page.get("CommonPrefixes", []) or []:
+                p = cp.get("Prefix") or ""
+                m = rx.search(p)
+                if not m:
+                    continue
+                try:
+                    y, mo, da = m.group(1).split(".")
+                    dates.add(date(int(y), int(mo), int(da)))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    if not dates:
+        for page in paginator.paginate(Bucket=bucket, Prefix=base):
+            for obj in page.get("Contents", []) or []:
+                k = obj.get("Key") or ""
+                m = rx.search(k)
+                if not m:
+                    continue
+                try:
+                    y, mo, da = m.group(1).split(".")
+                    dates.add(date(int(y), int(mo), int(da)))
+                except Exception:
+                    pass
+
+    return sorted(dates)
+
+
+def _all_csv_objects_for_day(d: date) -> list[dict]:
+    """
+    Возвращает CSV-объекты из папки All за заданный день, отсортированные по ключу.
+    """
+    client = _get_s3_client()
+    bucket = _bucket_name()
+    day_folder = f"{d.year:04d}.{d.month:02d}.{d.day:02d}"
+    prefix = _current_prefix_base() + f"All/{day_folder}/"
+    out: list[dict] = []
+
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []) or []:
+            key = str(obj.get("Key") or "")
+            if key.lower().endswith(".csv"):
+                out.append(obj)
+
+    return sorted(out, key=lambda obj: str(obj.get("Key") or ""))
+
+
+def _timestamp_from_csv_key(key: str, *, take_last: bool) -> datetime | None:
+    """
+    Читает CSV из S3 и возвращает первый или последний валидный timestamp из файла.
+    """
+    try:
+        df = read_csv_s3(key)
+    except Exception:
+        return None
+
+    if df is None or df.empty:
+        return None
+
+    lower_cols = {str(c).lower(): c for c in df.columns}
+    time_col = lower_cols.get("timestamp")
+    if time_col is None:
+        return None
+
+    values = df[time_col].dropna().astype(str).str.strip()
+    values = values[values != ""]
+    if values.empty:
+        return None
+
+    if take_last:
+        values = values.iloc[::-1]
+
+    for dayfirst in (False, True):
+        parsed = pd.to_datetime(values, errors="coerce", dayfirst=dayfirst)
+        valid = parsed.dropna()
+        if not valid.empty:
+            ts = valid.iloc[0]
+            if hasattr(ts, "to_pydatetime"):
+                return ts.to_pydatetime()
+
+    return None
+
+
+def s3_measurement_period_all() -> dict | None:
+    """
+    Возвращает период измерений по часовым CSV в All и кэширует результат в session_state.
+
+    Старт читается один раз для текущего префикса. Финиш перечитывается только если
+    изменился ключ последнего CSV-файла.
+    """
+    cache_key = "__measurement_period_all"
+    prefix = _current_prefix_base()
+    cached = st.session_state.get(cache_key)
+    if not isinstance(cached, dict) or cached.get("prefix") != prefix:
+        cached = {"prefix": prefix}
+
+    try:
+        days = _all_day_dates()
+        if not days:
+            st.session_state[cache_key] = cached
+            return None
+
+        if cached.get("start") is None:
+            first_objects: list[dict] = []
+            for d in days:
+                first_objects = _all_csv_objects_for_day(d)
+                if first_objects:
+                    break
+            if first_objects:
+                start_key = str(first_objects[0].get("Key") or "")
+                cached["start_key"] = start_key
+                cached["start"] = _timestamp_from_csv_key(start_key, take_last=False)
+
+        last_objects: list[dict] = []
+        for d in reversed(days):
+            last_objects = _all_csv_objects_for_day(d)
+            if last_objects:
+                break
+        if last_objects:
+            end_key = str(last_objects[-1].get("Key") or "")
+            if cached.get("end_key") != end_key:
+                cached["end_key"] = end_key
+                cached["end"] = _timestamp_from_csv_key(end_key, take_last=True)
+
+        st.session_state[cache_key] = cached
+
+        if cached.get("start") is None or cached.get("end") is None:
+            return None
+        return cached
+    except Exception:
+        st.session_state[cache_key] = cached
+        return None
 
 
 def s3_prefix_has_any_object(prefix: str) -> bool:
