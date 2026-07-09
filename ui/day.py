@@ -2,6 +2,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 import streamlit as st
 
+from ui.date_format import DATE_INPUT_FORMAT
+
 
 def _nav_shift(delta_days: int) -> None:
     """Сдвиг выбранной даты безопасно (через callback кнопки)."""
@@ -18,7 +20,7 @@ def render_day_picker() -> date:
         st.date_input(
             "Дата",
             key="selected_day",
-            format="YYYY-MM-DD",
+            format=DATE_INPUT_FORMAT,
         )
 
     return st.session_state["selected_day"]
