@@ -20,8 +20,14 @@ from botocore.exceptions import ClientError
 
 # -------------------- Константы статистики --------------------
 
-# Имя столбца мощности, по которому строим статистику
-TARGET_COLUMN = "P_total"
+# Столбцы мощности, по которым строим статистику
+SCHEMA_VERSION = 5
+PRIMARY_TARGET_COLUMN = "P_total"
+TARGET_COLUMNS: Tuple[str, ...] = ("P_total", "S_total")
+TARGET_COLUMN_PREFIXES: Dict[str, str] = {
+    "P_total": "P",
+    "S_total": "S",
+}
 TIME_COLUMN = "timestamp"
 
 # Перцентили для границ центральных интервалов
@@ -423,12 +429,12 @@ def _read_csv_from_bytes(data: bytes) -> pd.DataFrame:
     # 2) fallback
     return pd.read_csv(io.BytesIO(data), sep=None, engine="python", encoding="utf-8-sig")
 
-def _apply_outage_filter(df: pd.DataFrame, target_col: str) -> pd.DataFrame:
+def _apply_outage_filter(df: pd.DataFrame, target_cols: Iterable[str]) -> pd.DataFrame:
     """
     Исключает из расчёта точки отключения по трём фазным токам.
 
     Точка считается отключением, если все токи Irms_L1/Irms_L2/Irms_L3 строго
-    меньше OUTAGE_CURRENT_THRESHOLD_A. В таких строках целевой столбец заменяется
+    меньше OUTAGE_CURRENT_THRESHOLD_A. В таких строках целевые столбцы заменяются
     на NaN, чтобы точка не участвовала в средних и перцентилях.
     """
     if any(col not in df.columns for col in OUTAGE_CURRENT_COLUMNS):
@@ -440,7 +446,9 @@ def _apply_outage_filter(df: pd.DataFrame, target_col: str) -> pd.DataFrame:
         return df
 
     out = df.copy()
-    out.loc[outage_mask, target_col] = np.nan
+    for target_col in target_cols:
+        if target_col in out.columns:
+            out.loc[outage_mask, target_col] = np.nan
     return out
 
 def _mean_interval_without_nan(values: pd.Series) -> float:
@@ -461,13 +469,14 @@ def _read_day_dataframe(
     bucket: str,
     project_prefix: str,
     day_str: str,
-    target_col: str,
+    target_cols: Iterable[str],
 ) -> pd.DataFrame:
     """
-    Читает все CSV под <project>/All/<day>/..., собирает (timestamp, target_col).
-    Точки отключения по трём фазным токам исключает из target_col.
+    Читает все CSV под <project>/All/<day>/..., собирает timestamp и целевые столбцы.
+    Точки отключения по трём фазным токам исключает из всех целевых столбцов.
     Битые/нестандартные файлы пропускает.
     """
+    targets = list(target_cols)
     prefix = f"{project_prefix}All/{day_str}/"
     objs = _s3_list_objects(client, bucket, prefix=prefix)
     keys = sorted(
@@ -486,10 +495,10 @@ def _read_day_dataframe(
 
             if TIME_COLUMN not in df.columns:
                 continue
-            if target_col not in df.columns:
+            if any(target_col not in df.columns for target_col in targets):
                 continue
 
-            cols = [TIME_COLUMN, target_col] + [
+            cols = [TIME_COLUMN] + targets + [
                 col for col in OUTAGE_CURRENT_COLUMNS if col in df.columns
             ]
             sub = df[cols].copy()
@@ -498,14 +507,15 @@ def _read_day_dataframe(
             if sub.empty:
                 continue
 
-            sub[target_col] = pd.to_numeric(sub[target_col], errors="coerce")
-            sub = _apply_outage_filter(sub, target_col)
-            parts.append(sub[[TIME_COLUMN, target_col]])
+            for target_col in targets:
+                sub[target_col] = pd.to_numeric(sub[target_col], errors="coerce")
+            sub = _apply_outage_filter(sub, targets)
+            parts.append(sub[[TIME_COLUMN] + targets])
         except Exception:
             continue
 
     if not parts:
-        return pd.DataFrame(columns=[TIME_COLUMN, target_col])
+        return pd.DataFrame(columns=[TIME_COLUMN] + targets)
 
     out = pd.concat(parts, ignore_index=True)
     out = out.dropna(subset=[TIME_COLUMN])
@@ -551,12 +561,34 @@ def _build_day_series(
     s_m.name = day_str
     return s_m
 
-def _compute_quantiles(series_list: List[pd.Series], agg_minutes: int) -> pd.DataFrame:
+def _stat_label(column_prefix: str, percentile_label: str) -> str:
+    """Возвращает имя колонки статистики с нужным префиксом мощности."""
+    if percentile_label.startswith("P"):
+        return column_prefix + percentile_label[1:]
+    return column_prefix + percentile_label
+
+
+def _stat_columns_for_target(target_col: str) -> List[str]:
+    """Возвращает имена колонок перцентилей для целевого столбца мощности."""
+    prefix = TARGET_COLUMN_PREFIXES[target_col]
+    return [_stat_label(prefix, label) for _, label in PERCENTILES]
+
+
+def _all_stat_columns() -> List[str]:
+    """Возвращает полный порядок колонок статистики без колонки времени."""
+    cols: List[str] = []
+    for target_col in TARGET_COLUMNS:
+        cols.extend(_stat_columns_for_target(target_col))
+    return cols
+
+
+def _compute_quantiles(series_list: List[pd.Series], agg_minutes: int, target_col: str) -> pd.DataFrame:
+    """Считает перцентили суточных рядов для одного столбца мощности."""
     base = pd.Timestamp("2000-01-01")
     n = int(24 * 60 / agg_minutes)
     x = pd.date_range(base, periods=n, freq=f"{agg_minutes}min")
 
-    cols = [label for _, label in PERCENTILES]
+    cols = _stat_columns_for_target(target_col)
 
     if not series_list:
         out = pd.DataFrame(index=x, data={c: np.nan for c in cols})
@@ -565,7 +597,7 @@ def _compute_quantiles(series_list: List[pd.Series], agg_minutes: int) -> pd.Dat
     df = pd.concat([s.reindex(x) for s in series_list], axis=1).reindex(x)
 
     data: Dict[str, pd.Series] = {}
-    for p, label in PERCENTILES:
+    for (p, _percentile_label), label in zip(PERCENTILES, cols):
         data[label] = df.quantile(p, axis=1, numeric_only=True)
 
     out = pd.DataFrame(data, index=x)
@@ -635,9 +667,9 @@ def _write_quantile_csv(
     agg_minutes: int,
 ) -> None:
     out = qdf.copy()
-    cols = [label for _, label in PERCENTILES]
+    cols = _all_stat_columns()
     out.insert(0, "time", _time_labels(agg_minutes, len(out)))
-    out = out[["time"] + cols]
+    out = out.reindex(columns=["time"] + cols)
 
     buf = io.StringIO()
     out.to_csv(buf, index=False, sep=";", decimal=",")
@@ -676,16 +708,24 @@ def _recompute_project(
     prev_hash = str(state.get("input_manifest_hash") or "")
     same_input = (prev_hash != "" and prev_hash == str(input_sig.get("hash") or ""))
 
-    prev_target = str(state.get("target_column") or "")
+    prev_schema_version = int(state.get("schema_version") or 0)
+    prev_targets_raw = state.get("target_columns")
+    if isinstance(prev_targets_raw, list):
+        prev_targets = [str(v) for v in prev_targets_raw]
+    else:
+        prev_target = str(state.get("target_column") or "")
+        prev_targets = [prev_target] if prev_target else []
     prev_agg = int(state.get("agg_minutes") or 0)
     prev_percentiles = list(state.get("percentiles") or [])
     prev_outage_current_columns = list(state.get("outage_current_columns") or [])
     prev_outage_current_threshold_a = float(state.get("outage_current_threshold_a") or 0.0)
     cur_percentiles = [float(p) for p, _ in PERCENTILES]
     cur_outage_current_columns = list(OUTAGE_CURRENT_COLUMNS)
+    cur_targets = list(TARGET_COLUMNS)
 
     same_params = (
-        prev_target == TARGET_COLUMN
+        prev_schema_version == SCHEMA_VERSION
+        and prev_targets == cur_targets
         and prev_agg == int(agg_minutes)
         and prev_percentiles == cur_percentiles
         and prev_outage_current_columns == cur_outage_current_columns
@@ -710,8 +750,12 @@ def _recompute_project(
 
     print(f"  последняя дата {last_day}: {reason}, пересчитываю все дни (agg_minutes={agg_minutes})")
 
-    weekday_series: List[pd.Series] = []
-    weekend_series: List[pd.Series] = []
+    weekday_series_by_target: Dict[str, List[pd.Series]] = {
+        target_col: [] for target_col in TARGET_COLUMNS
+    }
+    weekend_series_by_target: Dict[str, List[pd.Series]] = {
+        target_col: [] for target_col in TARGET_COLUMNS
+    }
 
     for d in days:
         try:
@@ -737,22 +781,34 @@ def _recompute_project(
 
         is_holiday = bool(dd in holiday_set) if dd else False
 
-        df = _read_day_dataframe(client, bucket, project_prefix, d, TARGET_COLUMN)
-        s = _build_day_series(df, day_str=d, agg_minutes=agg_minutes, target_col=TARGET_COLUMN)
+        df = _read_day_dataframe(client, bucket, project_prefix, d, TARGET_COLUMNS)
+        for target_col in TARGET_COLUMNS:
+            s = _build_day_series(df, day_str=d, agg_minutes=agg_minutes, target_col=target_col)
+            if is_holiday:
+                weekend_series_by_target[target_col].append(s)
+            else:
+                weekday_series_by_target[target_col].append(s)
 
-        if is_holiday:
-            weekend_series.append(s)
-        else:
-            weekday_series.append(s)
-
-    q_weekday = _compute_quantiles(weekday_series, agg_minutes)
-    q_weekend = _compute_quantiles(weekend_series, agg_minutes)
+    q_weekday = pd.concat(
+        [
+            _compute_quantiles(weekday_series_by_target[target_col], agg_minutes, target_col)
+            for target_col in TARGET_COLUMNS
+        ],
+        axis=1,
+    )
+    q_weekend = pd.concat(
+        [
+            _compute_quantiles(weekend_series_by_target[target_col], agg_minutes, target_col)
+            for target_col in TARGET_COLUMNS
+        ],
+        axis=1,
+    )
 
     _write_quantile_csv(client, bucket, project_prefix, "weekday.csv", q_weekday, agg_minutes=agg_minutes)
     _write_quantile_csv(client, bucket, project_prefix, "weekend.csv", q_weekend, agg_minutes=agg_minutes)
 
     new_state = {
-        "schema_version": 4,
+        "schema_version": SCHEMA_VERSION,
         "computed_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "input_manifest_hash": str(input_sig.get("hash") or ""),
         "input_manifest_file_count": int(input_sig.get("file_count") or 0),
@@ -762,14 +818,16 @@ def _recompute_project(
         "last_day_max_key": str(sig["max_key"]),
         "last_day_max_last_modified": str(sig["max_last_modified"]),
         "agg_minutes": int(agg_minutes),
-        "target_column": TARGET_COLUMN,
+        "target_column": PRIMARY_TARGET_COLUMN,
+        "target_columns": list(TARGET_COLUMNS),
+        "target_column_prefixes": dict(TARGET_COLUMN_PREFIXES),
         "percentiles": [float(p) for p, _ in PERCENTILES],
         "percentile_labels": [label for _, label in PERCENTILES],
         "outage_current_columns": list(OUTAGE_CURRENT_COLUMNS),
         "outage_current_threshold_a": float(OUTAGE_CURRENT_THRESHOLD_A),
         "days_total": int(len(days)),
-        "days_weekday": int(len(weekday_series)),
-        "days_weekend": int(len(weekend_series)),
+        "days_weekday": int(len(weekday_series_by_target[PRIMARY_TARGET_COLUMN])),
+        "days_weekend": int(len(weekend_series_by_target[PRIMARY_TARGET_COLUMN])),
     }
     _write_state(client, bucket, project_prefix, new_state)
 
