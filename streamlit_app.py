@@ -22,6 +22,7 @@ from core.s3_paths import (
     build_ipeak_key_for,
     build_upeak_key_for,
 )
+from ui.date_format import format_datetime_ru
 state.init_once()
 init_hour_state()
 init_minute_state()  # NEW
@@ -193,14 +194,6 @@ def _is_demo_mode() -> bool:
         return False
 
 
-def _format_period_dt(dt) -> str:
-    """Форматирует дату и время периода измерений до минут."""
-    try:
-        return dt.strftime("%d.%m.%Y %H:%M")
-    except Exception:
-        return ""
-
-
 def _measurement_period_text() -> str:
     """Возвращает строку периода измерений для текущего объекта."""
     if _is_demo_mode():
@@ -210,8 +203,8 @@ def _measurement_period_text() -> str:
     if not period:
         return ""
 
-    start = _format_period_dt(period.get("start"))
-    end = _format_period_dt(period.get("end"))
+    start = format_datetime_ru(period.get("start"))
+    end = format_datetime_ru(period.get("end"))
     if not start or not end:
         return ""
     return f"Период измерений: с {start} по {end}"
