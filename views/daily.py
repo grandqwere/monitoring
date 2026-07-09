@@ -14,6 +14,7 @@ from ui.refresh import refresh_bar
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
 from ui.day import render_day_picker, day_nav_buttons
+from ui.date_format import format_date_ru
 from core.data_io import all_day_has_any_data, s3_latest_available_day_all
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
@@ -81,8 +82,9 @@ def _load_full_day(day: date_cls, *, force_reload: bool = False) -> tuple[pd.Dat
     """
     frames: list[pd.DataFrame] = []
     hours_present: set[int] = set()
+    day_label = format_date_ru(day)
 
-    with st.status(f"Готовим данные за {day.isoformat()}…", expanded=True) as status:
+    with st.status(f"Готовим данные за {day_label}…", expanded=True) as status:
         prog = st.progress(0, text="Загружаем часы: 0/24")
         for i, h in enumerate(range(24), start=1):
             dfh = load_hour(day, h, silent=True, force_reload=force_reload)
@@ -92,7 +94,7 @@ def _load_full_day(day: date_cls, *, force_reload: bool = False) -> tuple[pd.Dat
             prog.progress(int(i / 24 * 100), text=f"Загружаем часы: {i}/24")
 
         if not frames:
-            status.update(label=f"Отсутствуют данные за {day.isoformat()}.", state="error")
+            status.update(label=f"Отсутствуют данные за {day_label}.", state="error")
             return pd.DataFrame(), set()
 
         status.update(state="complete")
@@ -152,12 +154,12 @@ def render_daily_mode() -> None:
         daily_cache[day_key] = entry
 
         if df_day.empty:
-            st.warning(f"Отсутствуют данные за {day.isoformat()}.")
+            st.warning(f"Отсутствуют данные за {format_date_ru(day)}.")
             return
 
     df_day: pd.DataFrame = entry["df"]
     if df_day is None or df_day.empty:
-        st.warning(f"Отсутствуют данные за {day.isoformat()}.")
+        st.warning(f"Отсутствуют данные за {format_date_ru(day)}.")
         return
 
     # Кнопка "Обновить все графики"
