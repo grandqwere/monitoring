@@ -15,6 +15,7 @@ from core.minute_loader import (
 from core.plotting import minutely_summary_chart, group_panel
 from ui.refresh import refresh_bar
 from ui.minute_picker import render_date_hour_minute_picker
+from ui.date_format import format_date_minute_ru
 
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
@@ -32,9 +33,10 @@ def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
 
 def _load_with_status_set_only(date_obj, hour: int, minute: int, *, status_area) -> bool:
     """Загрузить ТОЛЬКО эту минуту (очищая минутный кэш). Статус — под пикером."""
+    dt_label = format_date_minute_ru(date_obj, hour, minute)
     with status_area.container():
         with st.status(
-            f"Готовим данные за {date_obj.isoformat()} {hour:02d}:{minute:02d}…",
+            f"Готовим данные за {dt_label}…",
             expanded=True,
         ) as status:
             prog = st.progress(0, text="Загружаем минуту: 0/1")
@@ -44,10 +46,10 @@ def _load_with_status_set_only(date_obj, hour: int, minute: int, *, status_area)
                 status.update(state="complete")
             else:
                 status.update(
-                    label=f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:{minute:02d}.",
+                    label=f"Отсутствуют данные за {dt_label}.",
                     state="error",
                 )
-                st.warning(f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:{minute:02d}.")
+                st.warning(f"Отсутствуют данные за {dt_label}.")
     if not ok:
         st.session_state["loaded_minutes"] = []
         st.session_state["minute_cache"] = {}
@@ -59,9 +61,10 @@ def _load_with_status_set_only(date_obj, hour: int, minute: int, *, status_area)
 
 def _load_with_status_append(date_obj, hour: int, minute: int, *, status_area) -> bool:
     """Дозагрузить вторую минуту. Статус — под пикером."""
+    dt_label = format_date_minute_ru(date_obj, hour, minute)
     with status_area.container():
         with st.status(
-            f"Готовим данные за {date_obj.isoformat()} {hour:02d}:{minute:02d}…",
+            f"Готовим данные за {dt_label}…",
             expanded=True,
         ) as status:
             prog = st.progress(0, text="Загружаем минуту: 0/1")
@@ -71,10 +74,10 @@ def _load_with_status_append(date_obj, hour: int, minute: int, *, status_area) -
                 status.update(state="complete")
             else:
                 status.update(
-                    label=f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:{minute:02d} (дозагрузка).",
+                    label=f"Отсутствуют данные за {dt_label} (дозагрузка).",
                     state="error",
                 )
-                st.warning(f"Отсутствуют данные за {date_obj.isoformat()} {hour:02d}:{minute:02d} (дозагрузка).")
+                st.warning(f"Отсутствуют данные за {dt_label} (дозагрузка).")
     return ok
 
 
