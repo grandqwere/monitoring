@@ -54,6 +54,16 @@ _INTERVALS: List[Tuple[str, str, str]] = [
 # Порядок интервалов от самого широкого к самому узкому (для вложенных заливок)
 _FILL_ORDER: List[str] = ["99%", "95%", "90%", "50%"]
 
+_POWER_MODE_OPTIONS: List[str] = [
+    "Параллельный режим (активная мощность)",
+    "Островной режим (полная мощность)",
+]
+
+_POWER_MODE_META: Dict[str, Tuple[str, str, str]] = {
+    "Параллельный режим (активная мощность)": ("P_total", "P", "кВт"),
+    "Островной режим (полная мощность)": ("S_total", "S", "кВА"),
+}
+
 
 def _theme_params(theme_base: str | None) -> Dict[str, str]:
     base = (theme_base or "light").lower()
@@ -124,12 +134,24 @@ def _read_stat_csv(filename: str) -> pd.DataFrame | None:
     return out
 
 
-def _iter_enabled_intervals_for_fill(enabled: Dict[str, bool]) -> List[Tuple[str, str, str]]:
+def _stat_col(prefix: str, percentile_col: str) -> str:
+    """Возвращает имя колонки статистики для выбранного типа мощности."""
+    if percentile_col.startswith("P"):
+        return prefix + percentile_col[1:]
+    return percentile_col
+
+
+def _intervals_for_prefix(prefix: str) -> List[Tuple[str, str, str]]:
+    """Возвращает колонки интервалов статистики для выбранного префикса мощности."""
+    return [(lbl, _stat_col(prefix, low_c), _stat_col(prefix, high_c)) for lbl, low_c, high_c in _INTERVALS]
+
+
+def _iter_intervals_for_fill(intervals: List[Tuple[str, str, str]]) -> List[Tuple[str, str, str]]:
     """Интервалы для вложенных заливок: от самого широкого к самому узкому.
 
     Серые области показываются всегда (не зависят от чекбоксов линий).
     """
-    label_to_bounds = {lbl: (low, high) for lbl, low, high in _INTERVALS}
+    label_to_bounds = {lbl: (low, high) for lbl, low, high in intervals}
     out: List[Tuple[str, str, str]] = []
     for lbl in _FILL_ORDER:
         if lbl in label_to_bounds:
@@ -157,15 +179,18 @@ def _compute_y_max(df: pd.DataFrame, cols: List[str]) -> float:
 def _compute_global_y_max(
     dfs: List[pd.DataFrame | None],
     *,
+    intervals: List[Tuple[str, str, str]],
+    median_col: str,
     enabled: Dict[str, bool],
     show_median: bool,
     threshold_values: List[float],
 ) -> float:
+    """Считает общий максимум Y для выбранного набора статистических колонок."""
     # Серые области показываются всегда, поэтому масштаб Y берём по верхним границам всех интервалов
     # (плюс медиана/пороги, если они включены).
-    cols: List[str] = [high_c for _lbl, _low_c, high_c in _INTERVALS]
+    cols: List[str] = [high_c for _lbl, _low_c, high_c in intervals]
     if show_median:
-        cols.append("P50")
+        cols.append(median_col)
 
     mx = 0.0
     for df in dfs:
@@ -187,18 +212,22 @@ def _make_figure(
     title: str,
     agg_minutes: int | None,
     target_col: str,
+    unit: str,
+    intervals: List[Tuple[str, str, str]],
+    median_col: str,
     enabled: Dict[str, bool],
     show_median: bool,
     thresholds: List[Tuple[int, float]],
     y_max_global: float,
     theme_base: str | None,
 ) -> go.Figure:
+    """Строит график статистики для выбранного режима мощности и единиц измерения."""
     params = _theme_params(theme_base)
 
     fig = go.Figure()
 
     # Вложенные серые заливки интервалов (показываются всегда)
-    for lbl, low_c, high_c in _iter_enabled_intervals_for_fill(enabled):
+    for lbl, low_c, high_c in _iter_intervals_for_fill(intervals):
         if low_c in df.columns and high_c in df.columns:
             fig.add_trace(
                 go.Scatter(
@@ -226,7 +255,7 @@ def _make_figure(
             )
 
     # Линии интервалов (по чекбоксам)
-    for lbl, low_c, high_c in _INTERVALS:
+    for lbl, low_c, high_c in intervals:
         if not enabled.get(lbl, False):
             continue
         color = _LINE_COLORS.get(lbl, None)
@@ -252,11 +281,11 @@ def _make_figure(
             )
 
     # Медиана
-    if show_median and "P50" in df.columns:
+    if show_median and median_col in df.columns:
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df["P50"],
+                y=df[median_col],
                 mode="lines",
                 name="Медиана",
                 line=dict(width=1, color=_LINE_COLORS.get("median")),
@@ -275,7 +304,7 @@ def _make_figure(
                     x=df.index,
                     y=[vv] * len(df.index),
                     mode="lines",
-                    name=f"Мощность: {vv} кВт",
+                    name=f"Мощность: {vv} {unit}",
                     showlegend=False,
                     line=dict(width=3, dash="dash", color=color),
                 )
@@ -296,7 +325,7 @@ def _make_figure(
         height=_STAT_HEIGHT,
         title=plot_title,
         xaxis_title="Время суток",
-        yaxis_title=f"{target_col}, кВт",
+        yaxis_title=f"{target_col}, {unit}",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0),
         margin=dict(l=60, r=20, t=70, b=60),
         plot_bgcolor=params["bg"],
@@ -317,6 +346,7 @@ def _make_figure(
 
 
 def render_statistical_mode() -> None:
+    """Отрисовывает вкладку статистики с выбором активной или полной мощности."""
     st.markdown("### Статистические")
 
     # Минимальная дистанция между графиками (только для этой вкладки)
@@ -335,18 +365,57 @@ def render_statistical_mode() -> None:
             unsafe_allow_html=True,
         )
 
+    default_power_mode = _POWER_MODE_OPTIONS[0]
+    if st.session_state.get("stat_power_mode") not in _POWER_MODE_OPTIONS:
+        st.session_state["stat_power_mode"] = default_power_mode
+
+    try:
+        power_mode = st.segmented_control(
+            "",
+            options=_POWER_MODE_OPTIONS,
+            default=default_power_mode,
+            key="stat_power_mode",
+            label_visibility="collapsed",
+        )
+    except Exception:
+        # Фолбэк для старых версий Streamlit
+        try:
+            power_mode = st.radio(
+                "",
+                options=_POWER_MODE_OPTIONS,
+                index=0,
+                horizontal=True,
+                key="stat_power_mode",
+                label_visibility="collapsed",
+            )
+        except Exception:
+            power_mode = st.radio(
+                "",
+                options=_POWER_MODE_OPTIONS,
+                index=0,
+                horizontal=True,
+                key="stat_power_mode",
+            )
+
+    if power_mode not in _POWER_MODE_META:
+        power_mode = default_power_mode
+
+    target_col, stat_prefix, unit = _POWER_MODE_META[power_mode]
+    intervals = _intervals_for_prefix(stat_prefix)
+    median_col = _stat_col(stat_prefix, "P50")
+
     _section_label("Пороги мощности (ручные):")
 
-    # 5 чекбоксов + числовые поля для горизонтальных линий "Мощность" (кВт)
+    # 5 чекбоксов + числовые поля для горизонтальных линий "Мощность" в единицах выбранного режима.
     thresholds: List[Tuple[int, int]] = []
     threshold_values: List[int] = []
     for i, (emoji, _color) in enumerate(_THRESHOLDS, start=1):
         col_cb, col_inp, _sp = st.columns([1.6, 1.1, 5.3])
         with col_cb:
-            en = st.checkbox(f"{emoji} Мощность (кВт)", value=False, key=f"stat_thr_en_{i}")
+            en = st.checkbox(f"{emoji} Мощность ({unit})", value=False, key=f"stat_thr_en_{i}")
         with col_inp:
             v = st.number_input(
-                f"thr_{i}_kw",
+                f"thr_{i}_power",
                 min_value=0,
                 value=0,
                 step=1,
@@ -361,13 +430,13 @@ def render_statistical_mode() -> None:
             thresholds.append((i, vv))
             threshold_values.append(vv)
 
-    # Увеличение мощности объекта на (кВт): поднимаем все значения из CSV на эту величину
+    # Увеличение мощности объекта: поднимаем все значения из CSV на эту величину.
     col_lbl, col_inp, _sp = st.columns([1.6, 1.1, 5.3])
     with col_lbl:
-        _section_label("Увеличить мощность объекта на (кВт):")
+        _section_label(f"Увеличить мощность объекта на ({unit}):")
     with col_inp:
-        shift_kw = st.number_input(
-            "shift_kw",
+        shift_power = st.number_input(
+            "shift_power",
             min_value=0,
             value=0,
             step=1,
@@ -376,9 +445,9 @@ def render_statistical_mode() -> None:
         )
 
     try:
-        shift_kw_int = int(shift_kw)
+        shift_power_int = int(shift_power)
     except Exception:
-        shift_kw_int = 0
+        shift_power_int = 0
 
     _section_label("Интервал мощности, % времени")
 
@@ -411,25 +480,25 @@ def render_statistical_mode() -> None:
     except Exception:
         agg_minutes = None
 
-    target_col = str(state.get("target_column") or "P_total")
-
     theme_base = st.get_option("theme.base") or "light"
 
     df_weekday = _read_stat_csv("weekday.csv")
     df_weekend = _read_stat_csv("weekend.csv")
 
-    # Сдвиг значений из CSV на введённую величину (кВт)
-    if shift_kw_int != 0:
+    # Сдвиг значений из CSV на введённую величину в единицах выбранного режима.
+    if shift_power_int != 0:
         for df in (df_weekday, df_weekend):
             if df is None or df.empty:
                 continue
             for c in df.columns:
                 if pd.api.types.is_numeric_dtype(df[c]):
-                    df[c] = df[c] + float(shift_kw_int)
+                    df[c] = df[c] + float(shift_power_int)
 
     shown = 0
     y_max = _compute_global_y_max(
         [df_weekday, df_weekend],
+        intervals=intervals,
+        median_col=median_col,
         enabled=enabled,
         show_median=show_median,
         threshold_values=threshold_values,
@@ -441,6 +510,9 @@ def render_statistical_mode() -> None:
             title="Будние дни",
             agg_minutes=agg_minutes,
             target_col=target_col,
+            unit=unit,
+            intervals=intervals,
+            median_col=median_col,
             enabled=enabled,
             show_median=show_median,
             thresholds=thresholds,
@@ -456,6 +528,9 @@ def render_statistical_mode() -> None:
             title="Выходные/праздничные дни",
             agg_minutes=agg_minutes,
             target_col=target_col,
+            unit=unit,
+            intervals=intervals,
+            median_col=median_col,
             enabled=enabled,
             show_median=show_median,
             thresholds=thresholds,
