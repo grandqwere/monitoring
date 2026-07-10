@@ -22,6 +22,7 @@ _LINE_COLORS: Dict[str, str] = {
     "90%": "#ff7f0e",
     "95%": "#9467bd",
     "99%": "#d62728",
+    "Max": "#d62728",
     "median": "#2ca02c",
     "threshold": "#7f7f7f",
 }
@@ -183,6 +184,8 @@ def _compute_global_y_max(
     median_col: str,
     enabled: Dict[str, bool],
     show_median: bool,
+    max_col: str,
+    show_max: bool,
     threshold_values: List[float],
 ) -> float:
     """Считает общий максимум Y для выбранного набора статистических колонок."""
@@ -191,6 +194,8 @@ def _compute_global_y_max(
     cols: List[str] = [high_c for _lbl, _low_c, high_c in intervals]
     if show_median:
         cols.append(median_col)
+    if show_max:
+        cols.append(max_col)
 
     mx = 0.0
     for df in dfs:
@@ -217,6 +222,8 @@ def _make_figure(
     median_col: str,
     enabled: Dict[str, bool],
     show_median: bool,
+    max_col: str,
+    show_max: bool,
     thresholds: List[Tuple[int, float]],
     y_max_global: float,
     theme_base: str | None,
@@ -289,6 +296,18 @@ def _make_figure(
                 mode="lines",
                 name="Медиана",
                 line=dict(width=1, color=_LINE_COLORS.get("median")),
+            )
+        )
+
+    # Максимально зафиксированное значение в каждом временном интервале
+    if show_max and max_col in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df[max_col],
+                mode="lines",
+                name="Max",
+                line=dict(width=1, color=_LINE_COLORS.get("Max")),
             )
         )
 
@@ -403,6 +422,7 @@ def render_statistical_mode() -> None:
     target_col, stat_prefix, unit = _POWER_MODE_META[power_mode]
     intervals = _intervals_for_prefix(stat_prefix)
     median_col = _stat_col(stat_prefix, "P50")
+    max_col = _stat_col(stat_prefix, "Pmax")
 
     _section_label("Пороги мощности (ручные):")
 
@@ -462,16 +482,22 @@ def render_statistical_mode() -> None:
     with c3:
         cb_95 = st.checkbox("95%", value=False, key="stat_cb_95")
     with c4:
-        cb_99 = st.checkbox("99%", value=False, key="stat_cb_99")
+        # Для каждого режима отдельное состояние: P — выключено, S — включено по умолчанию.
+        cb_max = st.checkbox(
+            "Max",
+            value=(stat_prefix == "S"),
+            key=f"stat_cb_max_{stat_prefix}",
+        )
 
     enabled: Dict[str, bool] = {
         "50%": bool(cb_50),
         "90%": bool(cb_90),
         "95%": bool(cb_95),
-        "99%": bool(cb_99),
+        "99%": False,
     }
 
     show_median = bool(cb_med)
+    show_max = bool(cb_max)
 
     state = _read_stat_state()
     agg_minutes = state.get("agg_minutes", None)
@@ -501,6 +527,8 @@ def render_statistical_mode() -> None:
         median_col=median_col,
         enabled=enabled,
         show_median=show_median,
+        max_col=max_col,
+        show_max=show_max,
         threshold_values=threshold_values,
     )
 
@@ -515,6 +543,8 @@ def render_statistical_mode() -> None:
             median_col=median_col,
             enabled=enabled,
             show_median=show_median,
+            max_col=max_col,
+            show_max=show_max,
             thresholds=thresholds,
             y_max_global=y_max,
             theme_base=theme_base,
@@ -533,6 +563,8 @@ def render_statistical_mode() -> None:
             median_col=median_col,
             enabled=enabled,
             show_median=show_median,
+            max_col=max_col,
+            show_max=show_max,
             thresholds=thresholds,
             y_max_global=y_max,
             theme_base=theme_base,
