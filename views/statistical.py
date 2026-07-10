@@ -120,9 +120,13 @@ def _read_stat_csv(filename: str) -> pd.DataFrame | None:
 
     out = df.drop(columns=["time"]).copy()
 
-    # Приводим числовые значения (на всякий случай, если что-то пришло строками)
+    # Числовые поля приводим к числам, поля времени максимумов сохраняем строками.
     for c in out.columns:
-        if not pd.api.types.is_numeric_dtype(out[c]):
+        if c.endswith("max_datetime"):
+            raw = out[c].fillna("").astype(str).str.strip()
+            parsed = pd.to_datetime(raw, errors="coerce")
+            out[c] = parsed.dt.strftime("%d.%m.%Y %H:%M:%S").where(parsed.notna(), "")
+        elif not pd.api.types.is_numeric_dtype(out[c]):
             s = out[c].astype(str).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False)
             out[c] = pd.to_numeric(s, errors="coerce")
 
@@ -220,6 +224,7 @@ def _make_figure(
     enabled: Dict[str, bool],
     show_median: bool,
     max_col: str,
+    max_datetime_col: str,
     show_max: bool,
     thresholds: List[Tuple[int, float]],
     y_max_global: float,
@@ -296,15 +301,27 @@ def _make_figure(
             )
         )
 
-    # Максимально зафиксированное значение в каждом временном интервале
+    # Максимально зафиксированное значение в каждом временном интервале.
+    # Только для этого тренда показываем фактические дату и время фиксации.
     if show_max and max_col in df.columns:
+        if max_datetime_col in df.columns:
+            max_datetimes = df[max_datetime_col].fillna("").astype(str)
+        else:
+            max_datetimes = pd.Series("", index=df.index)
+
         fig.add_trace(
             go.Scatter(
                 x=df.index,
                 y=df[max_col],
+                customdata=max_datetimes,
                 mode="lines",
                 name="Max",
                 line=dict(width=1, color=_LINE_COLORS.get("Max")),
+                hovertemplate=(
+                    f"Максимум: %{{y:.2f}} {unit}<br>"
+                    "Зафиксирован: %{customdata}"
+                    "<extra></extra>"
+                ),
             )
         )
 
@@ -420,6 +437,7 @@ def render_statistical_mode() -> None:
     intervals = _intervals_for_prefix(stat_prefix)
     median_col = _stat_col(stat_prefix, "P50")
     max_col = _stat_col(stat_prefix, "Pmax")
+    max_datetime_col = _stat_col(stat_prefix, "Pmax_datetime")
 
     _section_label("Пороги мощности (ручные):")
 
@@ -540,6 +558,7 @@ def render_statistical_mode() -> None:
             enabled=enabled,
             show_median=show_median,
             max_col=max_col,
+            max_datetime_col=max_datetime_col,
             show_max=show_max,
             thresholds=thresholds,
             y_max_global=y_max,
@@ -560,6 +579,7 @@ def render_statistical_mode() -> None:
             enabled=enabled,
             show_median=show_median,
             max_col=max_col,
+            max_datetime_col=max_datetime_col,
             show_max=show_max,
             thresholds=thresholds,
             y_max_global=y_max,
