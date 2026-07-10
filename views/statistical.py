@@ -20,7 +20,6 @@ _STAT_HEIGHT = 560
 _LINE_COLORS: Dict[str, str] = {
     "50%": "#1f77b4",
     "90%": "#ff7f0e",
-    "95%": "#9467bd",
     "99%": "#d62728",
     "Max": "#d62728",
     "median": "#2ca02c",
@@ -38,8 +37,7 @@ _THRESHOLDS: List[Tuple[str, str]] = [
 
 # Вложенные серые области для интервалов (внешние светлее, внутренние темнее)
 _FILL_COLORS: Dict[str, str] = {
-    "99%": "rgba(0,0,0,0.06)",
-    "95%": "rgba(0,0,0,0.09)",
+    "99%": "rgba(0,0,0,0.09)",
     "90%": "rgba(0,0,0,0.12)",
     "50%": "rgba(0,0,0,0.16)",
 }
@@ -48,12 +46,11 @@ _FILL_COLORS: Dict[str, str] = {
 _INTERVALS: List[Tuple[str, str, str]] = [
     ("50%", "P25", "P75"),
     ("90%", "P5", "P95"),
-    ("95%", "P2.5", "P97.5"),
     ("99%", "P0.5", "P99.5"),
 ]
 
 # Порядок интервалов от самого широкого к самому узкому (для вложенных заливок)
-_FILL_ORDER: List[str] = ["99%", "95%", "90%", "50%"]
+_FILL_ORDER: List[str] = ["99%", "90%", "50%"]
 
 _POWER_MODE_OPTIONS: List[str] = [
     "Параллельный режим (активная мощность)",
@@ -480,7 +477,7 @@ def render_statistical_mode() -> None:
     with c2:
         cb_90 = st.checkbox("90%", value=False, key="stat_cb_90")
     with c3:
-        cb_95 = st.checkbox("95%", value=False, key="stat_cb_95")
+        cb_99 = st.checkbox("99%", value=False, key="stat_cb_99")
     with c4:
         # Для каждого режима отдельное состояние: P — выключено, S — включено по умолчанию.
         cb_max = st.checkbox(
@@ -492,8 +489,7 @@ def render_statistical_mode() -> None:
     enabled: Dict[str, bool] = {
         "50%": bool(cb_50),
         "90%": bool(cb_90),
-        "95%": bool(cb_95),
-        "99%": False,
+        "99%": bool(cb_99),
     }
 
     show_median = bool(cb_med)
