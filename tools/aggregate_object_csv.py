@@ -47,6 +47,7 @@ EXPECTED_COLUMNS = [
     "Q_total", "Q_L1", "Q_L2", "Q_L3", "N_total", "N_L1", "N_L2", "N_L3",
     "frequency", "Urms_L1", "Urms_L2", "Urms_L3", "angle_L1_L2", "angle_L2_L3", "angle_L3_L1",
 ]
+NUMERIC_COLUMNS = [column for column in EXPECTED_COLUMNS if column != "timestamp"]
 
 PHASES = ["L1", "L2", "L3"]
 RECOVER_CT_FAILURES = True
@@ -242,9 +243,11 @@ def recover_ct_failures(df: pd.DataFrame) -> tuple[pd.DataFrame, RecoveryStats]:
 
 
 def ensure_finite_result(df: pd.DataFrame) -> None:
-    """Запрещает запись результата с NaN или бесконечными числовыми значениями."""
-    for column in (col for col in EXPECTED_COLUMNS if col != "timestamp"):
+    """Разрешает полностью пустые строки, но запрещает частичные NaN и inf."""
+    blank_rows = df[NUMERIC_COLUMNS].isna().all(axis=1)
+    for column in NUMERIC_COLUMNS:
         invalid_mask = ~df[column].map(lambda value: math.isfinite(float(value)))
+        invalid_mask &= ~blank_rows
         if invalid_mask.any():
             row_number = int(invalid_mask[invalid_mask].index[0]) + 1
             raise ValueError(
@@ -334,6 +337,13 @@ def aggregate_frames(frames: List[pd.DataFrame]) -> pd.DataFrame:
         raise ValueError("Нет ни одной общей секунды во всех 4 файлах.")
 
     frames = [df.loc[common_index].copy() for df in frames]
+    incomplete_rows = pd.Series(False, index=common_index)
+    for df in frames:
+        frame_is_finite = df[NUMERIC_COLUMNS].apply(
+            lambda column: column.map(lambda value: math.isfinite(float(value)))
+        )
+        incomplete_rows |= ~frame_is_finite.all(axis=1)
+
     out = pd.DataFrame(index=common_index)
 
     out["uptime"] = pd.concat([df["uptime"] for df in frames], axis=1).max(axis=1)
@@ -354,6 +364,10 @@ def aggregate_frames(frames: List[pd.DataFrame]) -> pd.DataFrame:
     out["S_total"] = out[["S_L1", "S_L2", "S_L3"]].sum(axis=1)
     out["N_total"] = out[["N_L1", "N_L2", "N_L3"]].sum(axis=1)
     out["pf_total"] = safe_pf(out["P_total"], out["S_total"])
+
+    # Если хотя бы один исходный файл содержит неполную строку, сохраняем
+    # её timestamp, но не подменяем отсутствующие данные расчётными значениями.
+    out.loc[incomplete_rows, NUMERIC_COLUMNS] = math.nan
 
     out = out.reset_index()
     out["timestamp"] = out["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
