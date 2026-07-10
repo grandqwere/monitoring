@@ -21,7 +21,7 @@ from botocore.exceptions import ClientError
 # -------------------- Константы статистики --------------------
 
 # Столбцы мощности, по которым строим статистику
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 PRIMARY_TARGET_COLUMN = "P_total"
 TARGET_COLUMNS: Tuple[str, ...] = ("P_total", "S_total")
 TARGET_COLUMN_PREFIXES: Dict[str, str] = {
@@ -29,6 +29,7 @@ TARGET_COLUMN_PREFIXES: Dict[str, str] = {
     "S_total": "S",
 }
 MAX_COLUMN_SUFFIX = "max"
+MAX_DATETIME_COLUMN_SUFFIX = "max_datetime"
 TIME_COLUMN = "timestamp"
 
 # Перцентили для границ центральных интервалов
@@ -569,13 +570,13 @@ def _build_day_max_series(
     day_str: str,
     agg_minutes: int,
     target_col: str,
-) -> pd.Series:
+) -> pd.DataFrame:
     """
-    Возвращает суточный ряд максимумов исходных значений по каждому интервалу.
+    Возвращает максимум и время его фиксации для каждого интервала суток.
 
     Максимум берётся непосредственно по исходным секундным строкам, без
-    предварительного усреднения. Если в интервале нет допустимых числовых
-    значений, результат интервала равен NaN.
+    предварительного усреднения. При нескольких одинаковых максимумах
+    сохраняется самое раннее фактическое время.
     """
     day_dt = pd.to_datetime(day_str, format="%Y.%m.%d", errors="coerce")
     if pd.isna(day_dt) and not df.empty:
@@ -591,15 +592,40 @@ def _build_day_max_series(
     x = pd.date_range(base, periods=n, freq=f"{agg_minutes}min")
 
     if df.empty:
-        return pd.Series(index=x, data=np.nan, name=day_str)
+        return pd.DataFrame(
+            {"value": np.nan, "datetime": pd.NaT},
+            index=x,
+        )
 
-    s0 = df.set_index(TIME_COLUMN)[target_col]
-    s0 = pd.to_numeric(s0, errors="coerce")
-    s_max = s0.resample(f"{agg_minutes}min").max()
-    s_max = s_max.reindex(bins)
+    work = df[[TIME_COLUMN, target_col]].copy()
+    work[TIME_COLUMN] = pd.to_datetime(work[TIME_COLUMN], errors="coerce")
+    work[target_col] = pd.to_numeric(work[target_col], errors="coerce")
+    work = work.dropna(subset=[TIME_COLUMN, target_col]).sort_values(TIME_COLUMN)
+    if work.empty:
+        return pd.DataFrame(
+            {"value": np.nan, "datetime": pd.NaT},
+            index=x,
+        )
+
+    s0 = work.set_index(TIME_COLUMN)[target_col]
+    grouped = s0.resample(f"{agg_minutes}min")
+    s_max = grouped.max().reindex(bins)
+
+    def _earliest_max_timestamp(values: pd.Series):
+        valid = values.dropna()
+        if valid.empty:
+            return pd.NaT
+        maximum = valid.max()
+        return valid[valid.eq(maximum)].index.min()
+
+    s_datetime = grouped.apply(_earliest_max_timestamp).reindex(bins)
+
     s_max.index = x
-    s_max.name = day_str
-    return s_max
+    s_datetime.index = x
+    return pd.DataFrame(
+        {"value": s_max.to_numpy(), "datetime": s_datetime.to_numpy()},
+        index=x,
+    )
 
 
 def _stat_label(column_prefix: str, percentile_label: str) -> str:
@@ -620,12 +646,18 @@ def _max_column_for_target(target_col: str) -> str:
     return TARGET_COLUMN_PREFIXES[target_col] + MAX_COLUMN_SUFFIX
 
 
+def _max_datetime_column_for_target(target_col: str) -> str:
+    """Возвращает имя колонки даты и времени максимума."""
+    return TARGET_COLUMN_PREFIXES[target_col] + MAX_DATETIME_COLUMN_SUFFIX
+
+
 def _all_stat_columns() -> List[str]:
     """Возвращает полный порядок колонок статистики без колонки времени."""
     cols: List[str] = []
     for target_col in TARGET_COLUMNS:
         cols.extend(_stat_columns_for_target(target_col))
         cols.append(_max_column_for_target(target_col))
+        cols.append(_max_datetime_column_for_target(target_col))
     return cols
 
 
@@ -651,18 +683,50 @@ def _compute_quantiles(series_list: List[pd.Series], agg_minutes: int, target_co
     return out
 
 
-def _compute_maximum(series_list: List[pd.Series], agg_minutes: int, target_col: str) -> pd.DataFrame:
-    """Считает максимумы исходных значений по всем дням для каждого интервала."""
+def _compute_maximum(series_list: List[pd.DataFrame], agg_minutes: int, target_col: str) -> pd.DataFrame:
+    """
+    Считает глобальный максимум и время его фиксации для каждого интервала.
+
+    Если одинаковый максимум встречался несколько раз, выбирается самое раннее
+    фактическое время. Более высокий максимум всегда заменяет прежнее значение
+    вместе с датой и временем.
+    """
     base = pd.Timestamp("2000-01-01")
     n = int(24 * 60 / agg_minutes)
     x = pd.date_range(base, periods=n, freq=f"{agg_minutes}min")
-    col = _max_column_for_target(target_col)
+    value_col = _max_column_for_target(target_col)
+    datetime_col = _max_datetime_column_for_target(target_col)
 
     if not series_list:
-        return pd.DataFrame(index=x, data={col: np.nan})
+        return pd.DataFrame(
+            {value_col: np.nan, datetime_col: pd.NaT},
+            index=x,
+        )
 
-    df = pd.concat([s.reindex(x) for s in series_list], axis=1).reindex(x)
-    return pd.DataFrame({col: df.max(axis=1, skipna=True)}, index=x)
+    values = pd.concat(
+        {i: frame["value"].reindex(x) for i, frame in enumerate(series_list)},
+        axis=1,
+    ).reindex(x)
+    timestamps = pd.concat(
+        {
+            i: pd.to_datetime(frame["datetime"].reindex(x), errors="coerce")
+            for i, frame in enumerate(series_list)
+        },
+        axis=1,
+    ).reindex(x)
+
+    maxima = values.max(axis=1, skipna=True)
+    matching_timestamps = timestamps.where(values.eq(maxima, axis=0))
+
+    def _earliest_timestamp(row: pd.Series):
+        valid = pd.to_datetime(row, errors="coerce").dropna()
+        return valid.min() if not valid.empty else pd.NaT
+
+    earliest = matching_timestamps.apply(_earliest_timestamp, axis=1)
+    return pd.DataFrame(
+        {value_col: maxima, datetime_col: earliest},
+        index=x,
+    )
 
 
 # -------------------- process_settings.json (agg_minutes) --------------------
@@ -730,6 +794,11 @@ def _write_quantile_csv(
     cols = _all_stat_columns()
     out.insert(0, "time", _time_labels(agg_minutes, len(out)))
     out = out.reindex(columns=["time"] + cols)
+
+    for target_col in TARGET_COLUMNS:
+        datetime_col = _max_datetime_column_for_target(target_col)
+        parsed = pd.to_datetime(out[datetime_col], errors="coerce")
+        out[datetime_col] = parsed.dt.strftime("%Y-%m-%d %H:%M:%S").where(parsed.notna(), "")
 
     buf = io.StringIO()
     out.to_csv(buf, index=False, sep=";", decimal=",")
@@ -816,10 +885,10 @@ def _recompute_project(
     weekend_series_by_target: Dict[str, List[pd.Series]] = {
         target_col: [] for target_col in TARGET_COLUMNS
     }
-    weekday_max_series_by_target: Dict[str, List[pd.Series]] = {
+    weekday_max_series_by_target: Dict[str, List[pd.DataFrame]] = {
         target_col: [] for target_col in TARGET_COLUMNS
     }
-    weekend_max_series_by_target: Dict[str, List[pd.Series]] = {
+    weekend_max_series_by_target: Dict[str, List[pd.DataFrame]] = {
         target_col: [] for target_col in TARGET_COLUMNS
     }
 
@@ -901,7 +970,11 @@ def _recompute_project(
         "percentiles": [float(p) for p, _ in PERCENTILES],
         "percentile_labels": [label for _, label in PERCENTILES],
         "maximum_columns": [_max_column_for_target(target_col) for target_col in TARGET_COLUMNS],
+        "maximum_datetime_columns": [
+            _max_datetime_column_for_target(target_col) for target_col in TARGET_COLUMNS
+        ],
         "maximum_source": "raw_values_within_interval",
+        "maximum_tie_break": "earliest_timestamp",
         "outage_current_columns": list(OUTAGE_CURRENT_COLUMNS),
         "outage_current_threshold_a": float(OUTAGE_CURRENT_THRESHOLD_A),
         "days_total": int(len(days)),
