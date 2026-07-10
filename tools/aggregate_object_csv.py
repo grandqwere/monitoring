@@ -91,7 +91,16 @@ def empty_recovery_stats() -> RecoveryStats:
         "recovered": {phase: 0 for phase in PHASES},
         "total_recovered": 0,
         "not_recovered": 0,
+        "missing_data_rows": 0,
     }
+
+
+def count_missing_data_rows(df: pd.DataFrame) -> int:
+    """Считает строки, содержащие хотя бы одно пустое или бесконечное значение."""
+    finite_values = df[NUMERIC_COLUMNS].apply(
+        lambda column: column.map(lambda value: math.isfinite(float(value)))
+    )
+    return int((~finite_values.all(axis=1)).sum())
 
 
 def align_common_timestamps(frames: List[pd.DataFrame]) -> List[pd.DataFrame]:
@@ -269,6 +278,7 @@ def print_recovery_stats(path: Path, stats: RecoveryStats) -> None:
         "Не восстановлено из-за некорректных или неоднозначных "
         f"данных: {stats['not_recovered']}"
     )
+    print(f"Обнаружены пропуски данных, строк: {stats['missing_data_rows']}")
 
 
 def write_recovery_stats(
@@ -457,13 +467,15 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         files, output, stats_output = parse_args(sys.argv[1:] if argv is None else argv)
         frames = [read_csv_file(path) for path in files]
+        missing_data_counts = [count_missing_data_rows(frame) for frame in frames]
 
         if RECOVER_CT_FAILURES:
             frames = align_common_timestamps(frames)
             processed_frames = []
             statistics = []
-            for path, frame in zip(files, frames):
+            for path, frame, missing_count in zip(files, frames, missing_data_counts):
                 processed_frame, frame_stats = recover_ct_failures(frame)
+                frame_stats["missing_data_rows"] = missing_count
                 processed_frames.append(processed_frame)
                 statistics.append(frame_stats)
                 print_recovery_stats(path, frame_stats)
@@ -471,6 +483,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         else:
             print("Восстановление данных при отказе ТТ отключено")
             statistics = [empty_recovery_stats() for _ in files]
+            for frame_stats, missing_count in zip(statistics, missing_data_counts):
+                frame_stats["missing_data_rows"] = missing_count
 
         result = aggregate_frames(frames)
         if RECOVER_CT_FAILURES:
