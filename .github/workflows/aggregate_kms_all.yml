@@ -248,8 +248,8 @@ jobs:
                   f"({len(lines)} unique lines)"
               )
 
-          def read_recovered_phases(path: Path) -> list[list[str]]:
-              """Прочитать и проверить статистику восстановленных фаз по источникам."""
+          def read_recovery_statistics(path: Path) -> tuple[list[list[str]], list[int]]:
+              """Прочитать статистику восстановленных фаз и пропусков по источникам."""
               try:
                   stats = json.loads(path.read_text(encoding="utf-8"))
               except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -268,6 +268,7 @@ jobs:
                   )
 
               recovered_phases: list[list[str]] = []
+              missing_data_rows: list[int] = []
               for index, item in enumerate(file_stats, start=1):
                   if not isinstance(item, dict) or not isinstance(item.get("recovered"), dict):
                       raise RuntimeError(
@@ -285,7 +286,18 @@ jobs:
                           phases.append(phase)
                   recovered_phases.append(phases)
 
-              return recovered_phases
+                  missing_count = item.get("missing_data_rows")
+                  if (
+                      isinstance(missing_count, bool)
+                      or not isinstance(missing_count, int)
+                      or missing_count < 0
+                  ):
+                      raise RuntimeError(
+                          f"Invalid missing data row count for source {index}"
+                      )
+                  missing_data_rows.append(missing_count)
+
+              return recovered_phases, missing_data_rows
 
           def list_hourly(prefix: str) -> dict[str, dict]:
               items: dict[str, dict] = {}
@@ -432,7 +444,7 @@ jobs:
                   *(str(path) for path in sources),
               ]
               subprocess.run(cmd, check=True)
-              recovered_phases = read_recovered_phases(stats_path)
+              recovered_phases, missing_data_rows = read_recovery_statistics(stats_path)
 
               dst_key = output_prefix + rel
               aws_run(
@@ -455,6 +467,17 @@ jobs:
                       recovery_report_lines.append(report_line)
                       known_recovery_lines.add(report_line)
                       new_report_lines.append(report_line)
+
+                  missing_count = missing_data_rows[index]
+                  if missing_count > 0:
+                      report_line = (
+                          f"{source_key} — обнаружены пропуски данных, "
+                          f"строк: {missing_count}"
+                      )
+                      if report_line not in known_recovery_lines:
+                          recovery_report_lines.append(report_line)
+                          known_recovery_lines.add(report_line)
+                          new_report_lines.append(report_line)
 
               if new_report_lines:
                   print(
