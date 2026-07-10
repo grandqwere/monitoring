@@ -21,7 +21,7 @@ _LINE_COLORS: Dict[str, str] = {
     "50%": "#1f77b4",
     "90%": "#ff7f0e",
     "99%": "#d62728",
-    "Max": "#d62728",
+    "Максимум": "#d62728",
     "median": "#2ca02c",
     "threshold": "#7f7f7f",
 }
@@ -315,8 +315,8 @@ def _make_figure(
                 y=df[max_col],
                 customdata=max_datetimes,
                 mode="lines",
-                name="Max",
-                line=dict(width=1, color=_LINE_COLORS.get("Max")),
+                name="Максимум",
+                line=dict(width=1, color=_LINE_COLORS.get("Максимум")),
                 hovertemplate=(
                     f"Максимум: %{{y:.2f}} {unit}<br>"
                     "Зафиксирован: %{customdata}"
@@ -499,7 +499,7 @@ def render_statistical_mode() -> None:
     with c4:
         # Для каждого режима отдельное состояние: P — выключено, S — включено по умолчанию.
         cb_max = st.checkbox(
-            "Max",
+            "Максимум",
             value=(stat_prefix == "S"),
             key=f"stat_cb_max_{stat_prefix}",
         )
