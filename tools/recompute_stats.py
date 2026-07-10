@@ -21,13 +21,14 @@ from botocore.exceptions import ClientError
 # -------------------- Константы статистики --------------------
 
 # Столбцы мощности, по которым строим статистику
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 PRIMARY_TARGET_COLUMN = "P_total"
 TARGET_COLUMNS: Tuple[str, ...] = ("P_total", "S_total")
 TARGET_COLUMN_PREFIXES: Dict[str, str] = {
     "P_total": "P",
     "S_total": "S",
 }
+MAX_COLUMN_SUFFIX = "max"
 TIME_COLUMN = "timestamp"
 
 # Перцентили для границ центральных интервалов
@@ -561,6 +562,46 @@ def _build_day_series(
     s_m.name = day_str
     return s_m
 
+
+def _build_day_max_series(
+    df: pd.DataFrame,
+    *,
+    day_str: str,
+    agg_minutes: int,
+    target_col: str,
+) -> pd.Series:
+    """
+    Возвращает суточный ряд максимумов исходных значений по каждому интервалу.
+
+    Максимум берётся непосредственно по исходным секундным строкам, без
+    предварительного усреднения. Если в интервале нет допустимых числовых
+    значений, результат интервала равен NaN.
+    """
+    day_dt = pd.to_datetime(day_str, format="%Y.%m.%d", errors="coerce")
+    if pd.isna(day_dt) and not df.empty:
+        day_dt = pd.to_datetime(df[TIME_COLUMN].min(), errors="coerce").floor("D")
+    if pd.isna(day_dt):
+        day_dt = pd.Timestamp("1970-01-01")
+
+    day_start = day_dt.floor("D")
+    n = int(24 * 60 / agg_minutes)
+    bins = pd.date_range(day_start, periods=n, freq=f"{agg_minutes}min")
+
+    base = pd.Timestamp("2000-01-01")
+    x = pd.date_range(base, periods=n, freq=f"{agg_minutes}min")
+
+    if df.empty:
+        return pd.Series(index=x, data=np.nan, name=day_str)
+
+    s0 = df.set_index(TIME_COLUMN)[target_col]
+    s0 = pd.to_numeric(s0, errors="coerce")
+    s_max = s0.resample(f"{agg_minutes}min").max()
+    s_max = s_max.reindex(bins)
+    s_max.index = x
+    s_max.name = day_str
+    return s_max
+
+
 def _stat_label(column_prefix: str, percentile_label: str) -> str:
     """Возвращает имя колонки статистики с нужным префиксом мощности."""
     if percentile_label.startswith("P"):
@@ -574,11 +615,17 @@ def _stat_columns_for_target(target_col: str) -> List[str]:
     return [_stat_label(prefix, label) for _, label in PERCENTILES]
 
 
+def _max_column_for_target(target_col: str) -> str:
+    """Возвращает имя колонки максимума для целевого столбца мощности."""
+    return TARGET_COLUMN_PREFIXES[target_col] + MAX_COLUMN_SUFFIX
+
+
 def _all_stat_columns() -> List[str]:
     """Возвращает полный порядок колонок статистики без колонки времени."""
     cols: List[str] = []
     for target_col in TARGET_COLUMNS:
         cols.extend(_stat_columns_for_target(target_col))
+        cols.append(_max_column_for_target(target_col))
     return cols
 
 
@@ -603,6 +650,19 @@ def _compute_quantiles(series_list: List[pd.Series], agg_minutes: int, target_co
     out = pd.DataFrame(data, index=x)
     return out
 
+
+def _compute_maximum(series_list: List[pd.Series], agg_minutes: int, target_col: str) -> pd.DataFrame:
+    """Считает максимумы исходных значений по всем дням для каждого интервала."""
+    base = pd.Timestamp("2000-01-01")
+    n = int(24 * 60 / agg_minutes)
+    x = pd.date_range(base, periods=n, freq=f"{agg_minutes}min")
+    col = _max_column_for_target(target_col)
+
+    if not series_list:
+        return pd.DataFrame(index=x, data={col: np.nan})
+
+    df = pd.concat([s.reindex(x) for s in series_list], axis=1).reindex(x)
+    return pd.DataFrame({col: df.max(axis=1, skipna=True)}, index=x)
 
 
 # -------------------- process_settings.json (agg_minutes) --------------------
@@ -756,6 +816,12 @@ def _recompute_project(
     weekend_series_by_target: Dict[str, List[pd.Series]] = {
         target_col: [] for target_col in TARGET_COLUMNS
     }
+    weekday_max_series_by_target: Dict[str, List[pd.Series]] = {
+        target_col: [] for target_col in TARGET_COLUMNS
+    }
+    weekend_max_series_by_target: Dict[str, List[pd.Series]] = {
+        target_col: [] for target_col in TARGET_COLUMNS
+    }
 
     for d in days:
         try:
@@ -784,22 +850,33 @@ def _recompute_project(
         df = _read_day_dataframe(client, bucket, project_prefix, d, TARGET_COLUMNS)
         for target_col in TARGET_COLUMNS:
             s = _build_day_series(df, day_str=d, agg_minutes=agg_minutes, target_col=target_col)
+            s_max = _build_day_max_series(df, day_str=d, agg_minutes=agg_minutes, target_col=target_col)
             if is_holiday:
                 weekend_series_by_target[target_col].append(s)
+                weekend_max_series_by_target[target_col].append(s_max)
             else:
                 weekday_series_by_target[target_col].append(s)
+                weekday_max_series_by_target[target_col].append(s_max)
 
     q_weekday = pd.concat(
         [
-            _compute_quantiles(weekday_series_by_target[target_col], agg_minutes, target_col)
+            frame
             for target_col in TARGET_COLUMNS
+            for frame in (
+                _compute_quantiles(weekday_series_by_target[target_col], agg_minutes, target_col),
+                _compute_maximum(weekday_max_series_by_target[target_col], agg_minutes, target_col),
+            )
         ],
         axis=1,
     )
     q_weekend = pd.concat(
         [
-            _compute_quantiles(weekend_series_by_target[target_col], agg_minutes, target_col)
+            frame
             for target_col in TARGET_COLUMNS
+            for frame in (
+                _compute_quantiles(weekend_series_by_target[target_col], agg_minutes, target_col),
+                _compute_maximum(weekend_max_series_by_target[target_col], agg_minutes, target_col),
+            )
         ],
         axis=1,
     )
@@ -823,6 +900,8 @@ def _recompute_project(
         "target_column_prefixes": dict(TARGET_COLUMN_PREFIXES),
         "percentiles": [float(p) for p, _ in PERCENTILES],
         "percentile_labels": [label for _, label in PERCENTILES],
+        "maximum_columns": [_max_column_for_target(target_col) for target_col in TARGET_COLUMNS],
+        "maximum_source": "raw_values_within_interval",
         "outage_current_columns": list(OUTAGE_CURRENT_COLUMNS),
         "outage_current_threshold_a": float(OUTAGE_CURRENT_THRESHOLD_A),
         "days_total": int(len(days)),
