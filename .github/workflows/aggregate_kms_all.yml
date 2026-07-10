@@ -47,6 +47,7 @@ jobs:
       SOURCE_PREFIX_3: "KMS.210(96)/All/"
       SOURCE_PREFIX_4: "KMS.22(121)/All/"
       OUTPUT_PREFIX: "kms.all(0)/All/"
+      RECOVERY_REPORT_KEY: "kms.all(0)/recovery.txt"
       WORK_DIR: "_kms_aggregate_work"
 
       # Schedule uses default values. Manual run may override them.
@@ -135,6 +136,10 @@ jobs:
               os.environ["SOURCE_PREFIX_4"],
           ]
           output_prefix = os.environ["OUTPUT_PREFIX"]
+          recovery_report_key = os.environ.get(
+              "RECOVERY_REPORT_KEY",
+              "kms.all(0)/recovery.txt",
+          ).lstrip("/")
 
           hourly_re = re.compile(
               r"^\d{4}\.\d{2}\.\d{2}/All-\d{4}\.\d{2}\.\d{2}-\d{2}\.00\.csv$",
@@ -172,6 +177,115 @@ jobs:
           def parse_dt(value: str) -> datetime:
               # AWS returns ISO datetime, usually like 2026-07-03T20:00:10+00:00
               return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+          def object_exists(key: str) -> bool:
+              """Проверить наличие объекта с точным ключом в S3."""
+              data = aws_json(
+                  "s3api",
+                  "list-objects-v2",
+                  "--bucket",
+                  bucket,
+                  "--prefix",
+                  key,
+                  "--max-keys",
+                  "10",
+                  "--output",
+                  "json",
+              )
+              return any(obj.get("Key") == key for obj in data.get("Contents", []))
+
+          def load_recovery_report(path: Path) -> tuple[list[str], set[str]]:
+              """Загрузить существующий отчёт, сохранив порядок уникальных строк."""
+              lines: list[str] = []
+              known_lines: set[str] = set()
+
+              if not object_exists(recovery_report_key):
+                  print(f"Recovery report does not exist yet: {recovery_report_key}")
+                  return lines, known_lines
+
+              aws_run(
+                  "s3",
+                  "cp",
+                  f"s3://{bucket}/{recovery_report_key}",
+                  str(path),
+                  "--only-show-errors",
+              )
+
+              try:
+                  existing_text = path.read_text(encoding="utf-8-sig")
+              except UnicodeError as exc:
+                  raise RuntimeError(
+                      f"Recovery report is not valid UTF-8: {recovery_report_key}"
+                  ) from exc
+
+              for raw_line in existing_text.splitlines():
+                  line = raw_line.strip()
+                  if not line or line in known_lines:
+                      continue
+                  lines.append(line)
+                  known_lines.add(line)
+
+              print(f"Loaded recovery report lines: {len(lines)}")
+              return lines, known_lines
+
+          def upload_recovery_report(path: Path, lines: list[str]) -> None:
+              """Атомарно обновить локальный отчёт и загрузить его в S3."""
+              temporary_path = path.with_suffix(path.suffix + ".tmp")
+              with temporary_path.open("w", encoding="utf-8-sig", newline="\n") as report:
+                  for line in lines:
+                      report.write(line + "\n")
+              temporary_path.replace(path)
+
+              aws_run(
+                  "s3",
+                  "cp",
+                  str(path),
+                  f"s3://{bucket}/{recovery_report_key}",
+                  "--only-show-errors",
+              )
+              print(
+                  f"Recovery report uploaded: {recovery_report_key} "
+                  f"({len(lines)} unique lines)"
+              )
+
+          def read_recovered_phases(path: Path) -> list[list[str]]:
+              """Прочитать и проверить статистику восстановленных фаз по источникам."""
+              try:
+                  stats = json.loads(path.read_text(encoding="utf-8"))
+              except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                  raise RuntimeError(f"Cannot read recovery statistics: {path}") from exc
+
+              recovery_enabled = stats.get("recovery_enabled")
+              if not isinstance(recovery_enabled, bool):
+                  raise RuntimeError(
+                      "Recovery statistics field 'recovery_enabled' must be boolean"
+                  )
+
+              file_stats = stats.get("files")
+              if not isinstance(file_stats, list) or len(file_stats) != len(source_prefixes):
+                  raise RuntimeError(
+                      "Recovery statistics must contain one entry for each source file"
+                  )
+
+              recovered_phases: list[list[str]] = []
+              for index, item in enumerate(file_stats, start=1):
+                  if not isinstance(item, dict) or not isinstance(item.get("recovered"), dict):
+                      raise RuntimeError(
+                          f"Invalid recovery statistics for source {index}"
+                      )
+
+                  phases: list[str] = []
+                  for phase in ("L1", "L2", "L3"):
+                      count = item["recovered"].get(phase)
+                      if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                          raise RuntimeError(
+                              f"Invalid recovery count for source {index}, phase {phase}"
+                          )
+                      if recovery_enabled and count > 0:
+                          phases.append(phase)
+                  recovered_phases.append(phases)
+
+              return recovered_phases
 
           def list_hourly(prefix: str) -> dict[str, dict]:
               items: dict[str, dict] = {}
@@ -278,6 +392,11 @@ jobs:
               print("Nothing to aggregate. Exit successfully.")
               raise SystemExit(0)
 
+          recovery_report_path = work_dir / "recovery.txt"
+          recovery_report_lines, known_recovery_lines = load_recovery_report(
+              recovery_report_path
+          )
+
           aggregated = 0
 
           for rel, reason in candidates:
@@ -300,15 +419,20 @@ jobs:
 
               out_path = work_dir / "output" / "All" / rel
               out_path.parent.mkdir(parents=True, exist_ok=True)
+              stats_path = work_dir / "output" / "recovery_stats.json"
+              stats_path.unlink(missing_ok=True)
 
               cmd = [
                   sys.executable,
                   "tools/aggregate_object_csv.py",
                   "--out",
                   str(out_path),
+                  "--stats-out",
+                  str(stats_path),
                   *(str(path) for path in sources),
               ]
               subprocess.run(cmd, check=True)
+              recovered_phases = read_recovered_phases(stats_path)
 
               dst_key = output_prefix + rel
               aws_run(
@@ -318,6 +442,31 @@ jobs:
                   f"s3://{bucket}/{dst_key}",
                   "--only-show-errors",
               )
+
+              new_report_lines: list[str] = []
+              for index, phases in enumerate(recovered_phases):
+                  source_key = source_prefixes[index] + rel
+                  for phase in phases:
+                      report_line = (
+                          f"{source_key} — восстановлен ток фазы {phase}"
+                      )
+                      if report_line in known_recovery_lines:
+                          continue
+                      recovery_report_lines.append(report_line)
+                      known_recovery_lines.add(report_line)
+                      new_report_lines.append(report_line)
+
+              if new_report_lines:
+                  print(
+                      f"New recovery report lines for {rel}: "
+                      f"{len(new_report_lines)}"
+                  )
+                  upload_recovery_report(
+                      recovery_report_path,
+                      recovery_report_lines,
+                  )
+              else:
+                  print(f"No new recovery report lines for {rel}")
 
               aggregated += 1
 
