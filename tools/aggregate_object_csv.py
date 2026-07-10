@@ -13,10 +13,17 @@
 - U, частота, температура, углы — медиана по 4 файлам;
 - uptime — максимум из 4 файлов;
 - строки пишутся только для секунд, которые есть во всех 4 файлах;
+- при включённом RECOVER_CT_FAILURES до суммирования восстанавливается только
+  аномально заниженная фаза каждого входного файла;
 - структура и порядок колонок сохраняются как в исходном CSV.
+
+Восстановление по умолчанию отключено. Служебный параметр --stats-out пишет
+JSON-статистику для управляющего workflow и не изменяет структуру итогового CSV.
 
 Запуск:
     python aggregate_object_csv.py --out object.csv cell1.csv cell2.csv cell3.csv cell4.csv
+
+Для управляющего workflow можно дополнительно указать --stats-out stats.json.
 
 Если запустить без аргументов, откроются стандартные окна выбора файлов Windows.
 """
@@ -24,10 +31,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
-from typing import Iterable, List
+from typing import Dict, Iterable, List
 
 import pandas as pd
 
@@ -41,6 +49,16 @@ EXPECTED_COLUMNS = [
 ]
 
 PHASES = ["L1", "L2", "L3"]
+RECOVER_CT_FAILURES = False
+CT_CURRENT_DEVIATION_THRESHOLD_PERCENT = 90.0
+MIN_HEALTHY_PAIR_CURRENT_A = 1.0
+PAIR_SELECTION_TIE_TOLERANCE = 1e-12
+
+PHASE_PAIRS = [
+    ("L1", "L2", "L3"),
+    ("L1", "L3", "L2"),
+    ("L2", "L3", "L1"),
+]
 MEDIAN_COLUMNS = [
     "temp",
     "U_L1_L2", "U_L2_L3", "U_L3_L1",
@@ -62,6 +80,210 @@ DECIMALS = {
     "Urms_L1": 2, "Urms_L2": 2, "Urms_L3": 2,
     "angle_L1_L2": 1, "angle_L2_L3": 1, "angle_L3_L1": 1,
 }
+
+RecoveryStats = Dict[str, object]
+
+
+def empty_recovery_stats() -> RecoveryStats:
+    """Создаёт пустую статистику восстановления для одного входного файла."""
+    return {
+        "recovered": {phase: 0 for phase in PHASES},
+        "total_recovered": 0,
+        "not_recovered": 0,
+    }
+
+
+def align_common_timestamps(frames: List[pd.DataFrame]) -> List[pd.DataFrame]:
+    """Возвращает копии четырёх таблиц, ограниченные общими временными метками."""
+    if len(frames) != 4:
+        raise ValueError("Нужно ровно 4 входных CSV-файла.")
+
+    common_index = frames[0].index
+    for df in frames[1:]:
+        common_index = common_index.intersection(df.index)
+
+    common_index = common_index.sort_values()
+    if len(common_index) == 0:
+        raise ValueError("Нет ни одной общей секунды во всех 4 файлах.")
+
+    return [df.loc[common_index].copy() for df in frames]
+
+
+def pair_relative_difference(first_current: float, second_current: float) -> float:
+    """Вычисляет симметричное относительное расхождение токов пары в процентах."""
+    pair_mean = first_current / 2.0 + second_current / 2.0
+    if pair_mean == 0.0:
+        return 0.0
+    return abs(first_current - second_current) / pair_mean * 100.0
+
+
+def has_potential_failure(
+    currents: Dict[str, float],
+    pair: tuple[str, str, str],
+) -> bool:
+    """Проверяет, может ли вариант исправной пары означать превышение порога."""
+    first_phase, second_phase, suspect_phase = pair
+    pair_mean = currents[first_phase] / 2.0 + currents[second_phase] / 2.0
+    suspect_current = currents[suspect_phase]
+
+    if pair_mean <= MIN_HEALTHY_PAIR_CURRENT_A:
+        return (
+            abs(suspect_current - pair_mean)
+            > pair_mean * CT_CURRENT_DEVIATION_THRESHOLD_PERCENT / 100.0
+        )
+
+    if suspect_current >= pair_mean:
+        return False
+
+    deviation = (pair_mean - suspect_current) / pair_mean * 100.0
+    return deviation > CT_CURRENT_DEVIATION_THRESHOLD_PERCENT
+
+
+def recover_ct_failures(df: pd.DataFrame) -> tuple[pd.DataFrame, RecoveryStats]:
+    """
+    Восстанавливает отказ одной фазы по двум наиболее близким токам.
+
+    Исходная таблица не изменяется. Для найденной заниженной фазы атомарно
+    пересчитываются только P, Q, S, N, pf и Irms; общие поля не затрагиваются.
+    """
+    result = df.copy()
+    stats = empty_recovery_stats()
+    recovered = stats["recovered"]
+    prepared_phases = set()
+
+    for index, row in df.iterrows():
+        currents = {phase: float(row[f"Irms_{phase}"]) for phase in PHASES}
+        if any(not math.isfinite(value) or value < 0.0 for value in currents.values()):
+            stats["not_recovered"] += 1
+            continue
+
+        differences = {
+            pair: pair_relative_difference(currents[pair[0]], currents[pair[1]])
+            for pair in PHASE_PAIRS
+        }
+        minimum_difference = min(differences.values())
+        closest_pairs = [
+            pair
+            for pair, difference in differences.items()
+            if abs(difference - minimum_difference) <= PAIR_SELECTION_TIE_TOLERANCE
+        ]
+
+        if len(closest_pairs) != 1:
+            if any(has_potential_failure(currents, pair) for pair in closest_pairs):
+                stats["not_recovered"] += 1
+            continue
+
+        healthy_first, healthy_second, suspect_phase = closest_pairs[0]
+        pair_mean = (
+            currents[healthy_first] / 2.0 + currents[healthy_second] / 2.0
+        )
+        suspect_current = currents[suspect_phase]
+
+        if pair_mean <= MIN_HEALTHY_PAIR_CURRENT_A:
+            if has_potential_failure(currents, closest_pairs[0]):
+                stats["not_recovered"] += 1
+            continue
+
+        if suspect_current >= pair_mean:
+            continue
+
+        deviation = (pair_mean - suspect_current) / pair_mean * 100.0
+        if deviation <= CT_CURRENT_DEVIATION_THRESHOLD_PERCENT:
+            continue
+
+        healthy_values = [
+            float(row[f"{parameter}_{phase}"])
+            for parameter in ("P", "Q")
+            for phase in (healthy_first, healthy_second)
+        ]
+        target_urms = float(row[f"Urms_{suspect_phase}"])
+        if (
+            any(not math.isfinite(value) for value in healthy_values)
+            or not math.isfinite(target_urms)
+            or target_urms <= 0.0
+        ):
+            stats["not_recovered"] += 1
+            continue
+
+        p_value = healthy_values[0] / 2.0 + healthy_values[1] / 2.0
+        q_value = healthy_values[2] / 2.0 + healthy_values[3] / 2.0
+        s_value = math.hypot(p_value, q_value)
+        n_value = abs(q_value)
+        pf_value = p_value / s_value if s_value != 0.0 else 0.0
+        irms_value = abs(s_value * 1000.0 / target_urms)
+        restored_values = [
+            p_value,
+            q_value,
+            s_value,
+            n_value,
+            pf_value,
+            irms_value,
+        ]
+        if any(not math.isfinite(value) for value in restored_values):
+            stats["not_recovered"] += 1
+            continue
+
+        target_columns = [
+            f"P_{suspect_phase}",
+            f"Q_{suspect_phase}",
+            f"S_{suspect_phase}",
+            f"N_{suspect_phase}",
+            f"pf_{suspect_phase}",
+            f"Irms_{suspect_phase}",
+        ]
+        if suspect_phase not in prepared_phases:
+            result[target_columns] = result[target_columns].astype(float)
+            prepared_phases.add(suspect_phase)
+        result.loc[index, target_columns] = restored_values
+        recovered[suspect_phase] += 1
+        stats["total_recovered"] += 1
+
+    return result, stats
+
+
+def ensure_finite_result(df: pd.DataFrame) -> None:
+    """Запрещает запись результата с NaN или бесконечными числовыми значениями."""
+    for column in (col for col in EXPECTED_COLUMNS if col != "timestamp"):
+        invalid_mask = ~df[column].map(lambda value: math.isfinite(float(value)))
+        if invalid_mask.any():
+            row_number = int(invalid_mask[invalid_mask].index[0]) + 1
+            raise ValueError(
+                "Итоговый CSV не записан: обнаружено NaN или inf "
+                f"в колонке {column}, строка данных {row_number}."
+            )
+
+
+def print_recovery_stats(path: Path, stats: RecoveryStats) -> None:
+    """Выводит краткую статистику восстановления одного входного файла."""
+    recovered = stats["recovered"]
+    print(f"Файл: {path}")
+    print(
+        "Восстановлено: "
+        f"L1={recovered['L1']}, L2={recovered['L2']}, L3={recovered['L3']}, "
+        f"всего={stats['total_recovered']}"
+    )
+    print(
+        "Не восстановлено из-за некорректных или неоднозначных "
+        f"данных: {stats['not_recovered']}"
+    )
+
+
+def write_recovery_stats(
+    path: Path,
+    files: List[Path],
+    statistics: List[RecoveryStats],
+) -> None:
+    """Записывает машинную JSON-статистику в порядке входных файлов."""
+    payload = {
+        "recovery_enabled": RECOVER_CT_FAILURES,
+        "files": [
+            {"path": str(file_path), **stats}
+            for file_path, stats in zip(files, statistics)
+        ],
+    }
+    with path.open("w", encoding="utf-8", newline="\n") as file:
+        json.dump(payload, file, ensure_ascii=False, indent=2)
+        file.write("\n")
 
 
 def read_csv_file(path: Path) -> pd.DataFrame:
@@ -188,16 +410,23 @@ def choose_files_gui() -> tuple[List[Path], Path]:
     return files, Path(output)
 
 
-def parse_args(argv: Iterable[str]) -> tuple[List[Path], Path]:
+def parse_args(argv: Iterable[str]) -> tuple[List[Path], Path, Path | None]:
+    """Разбирает пути четырёх входных CSV, результата и служебной статистики."""
     parser = argparse.ArgumentParser(
         description="Собрать 4 CSV ячеек в один CSV по объекту без изменения структуры колонок."
     )
     parser.add_argument("files", nargs="*", help="4 входных CSV-файла")
     parser.add_argument("--out", "-o", required=False, help="Итоговый CSV-файл")
+    parser.add_argument(
+        "--stats-out",
+        required=False,
+        help="Служебный JSON-файл статистики восстановления",
+    )
     args = parser.parse_args(list(argv))
 
-    if not args.files and not args.out:
-        return choose_files_gui()
+    if not args.files and not args.out and not args.stats_out:
+        files, output = choose_files_gui()
+        return files, output, None
 
     files = [Path(p) for p in args.files]
     if len(files) != 4:
@@ -205,15 +434,36 @@ def parse_args(argv: Iterable[str]) -> tuple[List[Path], Path]:
     if not args.out:
         parser.error("Нужно указать --out итоговый_файл.csv")
 
-    return files, Path(args.out)
+    stats_output = Path(args.stats_out) if args.stats_out else None
+    return files, Path(args.out), stats_output
 
 
 def main(argv: Iterable[str] | None = None) -> int:
+    """Читает файлы, при необходимости восстанавливает данные и пишет результат."""
     try:
-        files, output = parse_args(sys.argv[1:] if argv is None else argv)
+        files, output, stats_output = parse_args(sys.argv[1:] if argv is None else argv)
         frames = [read_csv_file(path) for path in files]
+
+        if RECOVER_CT_FAILURES:
+            frames = align_common_timestamps(frames)
+            processed_frames = []
+            statistics = []
+            for path, frame in zip(files, frames):
+                processed_frame, frame_stats = recover_ct_failures(frame)
+                processed_frames.append(processed_frame)
+                statistics.append(frame_stats)
+                print_recovery_stats(path, frame_stats)
+            frames = processed_frames
+        else:
+            print("Восстановление данных при отказе ТТ отключено")
+            statistics = [empty_recovery_stats() for _ in files]
+
         result = aggregate_frames(frames)
+        if RECOVER_CT_FAILURES:
+            ensure_finite_result(result)
         write_csv_file(result, output)
+        if stats_output is not None:
+            write_recovery_stats(stats_output, files, statistics)
         print(f"Готово: {output}")
         print(f"Строк записано: {len(result)}")
         print(f"Период: {result['timestamp'].iloc[0]} ... {result['timestamp'].iloc[-1]}")
