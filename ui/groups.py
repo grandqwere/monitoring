@@ -11,16 +11,39 @@ def find_first(df_cols, *candidates):
             return lower[cand.lower()]
     return None
 
-def render_group(title: str, key_suffix: str, df: pd.DataFrame, cols: list[str], height: int, theme_base: str, all_token: int):
+def render_group(
+    title: str,
+    key_suffix: str,
+    df: pd.DataFrame,
+    cols: list[str],
+    height: int,
+    theme_base: str,
+    all_token: int,
+    *,
+    gap_threshold: str | pd.Timedelta | None = None,
+):
     token = refresh_bar(title, key_suffix)
     present = [c for c in cols if c in df.columns]
     if not present:
         st.info("Нет соответствующих колонок.")
         return
-    fig = group_panel(df, present, height=height, theme_base=theme_base)
+    fig = group_panel(
+        df,
+        present,
+        height=height,
+        theme_base=theme_base,
+        gap_threshold=gap_threshold,
+    )
     st.plotly_chart(fig, use_container_width=True, config={"responsive": True}, key=f"{key_suffix}_{all_token}_{token}")
 
-def render_power_group(df: pd.DataFrame, height: int, theme_base: str, all_token: int):
+def render_power_group(
+    df: pd.DataFrame,
+    height: int,
+    theme_base: str,
+    all_token: int,
+    *,
+    gap_threshold: str | pd.Timedelta | None = None,
+):
     token = refresh_bar("Мощность: полная / активная / неактивная / реактивная ", "grp_power")
     c1, c2, c3, c4 = st.columns(4)
     with c1: show_total = st.checkbox("Общие", True, key="p_sel_total")
@@ -46,5 +69,11 @@ def render_power_group(df: pd.DataFrame, height: int, theme_base: str, all_token
         add_power_set("total")
 
     present = [c for c in power_cols if c in df.columns]
-    fig = group_panel(df, present, height=height, theme_base=theme_base)
+    fig = group_panel(
+        df,
+        present,
+        height=height,
+        theme_base=theme_base,
+        gap_threshold=gap_threshold,
+    )
     st.plotly_chart(fig, use_container_width=True, config={"responsive": True}, key=f"grp_power_{all_token}_{token}")
