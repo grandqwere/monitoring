@@ -13,6 +13,9 @@ from ui.groups import render_group, render_power_group
 from ui.date_format import format_date_hour_ru
 
 
+HOURLY_GAP_THRESHOLD = pd.Timedelta(seconds=1)
+
+
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for c in df.columns:
@@ -167,6 +170,7 @@ def render_hourly_mode() -> None:
         height=PLOT_HEIGHT,
         theme_base=theme_base,
         separate_axes=set(separate_set),
+        gap_threshold=HOURLY_GAP_THRESHOLD,
     )
     st.plotly_chart(
         fig_main,
@@ -175,12 +179,35 @@ def render_hourly_mode() -> None:
         key=f"main_{ALL_TOKEN}_{token_main}",
     )
 
-    render_power_group(df_current, PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Токи фаз L1–L3", "grp_curr", df_current, ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Напряжение (фазное) L1–L3", "grp_urms", df_current, ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "grp_uline", df_current, ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
-    render_group("Коэффициент мощности (PF)", "grp_pf", df_current, ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN)
+    render_power_group(
+        df_current, PLOT_HEIGHT, theme_base, ALL_TOKEN,
+        gap_threshold=HOURLY_GAP_THRESHOLD,
+    )
+    render_group(
+        "Токи фаз L1–L3", "grp_curr", df_current,
+        ["Irms_L1", "Irms_L2", "Irms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN,
+        gap_threshold=HOURLY_GAP_THRESHOLD,
+    )
+    render_group(
+        "Напряжение (фазное) L1–L3", "grp_urms", df_current,
+        ["Urms_L1", "Urms_L2", "Urms_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN,
+        gap_threshold=HOURLY_GAP_THRESHOLD,
+    )
+    render_group(
+        "Напряжение (линейное) L1-L2 / L2-L3 / L3-L1", "grp_uline", df_current,
+        ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN,
+        gap_threshold=HOURLY_GAP_THRESHOLD,
+    )
+    render_group(
+        "Коэффициент мощности (PF)", "grp_pf", df_current,
+        ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN,
+        gap_threshold=HOURLY_GAP_THRESHOLD,
+    )
 
     freq_cols = [c for c in df_current.columns if pd.api.types.is_numeric_dtype(df_current[c]) and (("freq" in c.lower()) or ("frequency" in c.lower()) or ("hz" in c.lower()) or (c.lower() == "f"))]
     if freq_cols:
-        render_group("Частота сети", "grp_freq", df_current, freq_cols, PLOT_HEIGHT, theme_base, ALL_TOKEN)
+        render_group(
+            "Частота сети", "grp_freq", df_current, freq_cols,
+            PLOT_HEIGHT, theme_base, ALL_TOKEN,
+            gap_threshold=HOURLY_GAP_THRESHOLD,
+        )
