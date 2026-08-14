@@ -23,6 +23,64 @@ def _stride(df: pd.DataFrame, max_points: int) -> pd.DataFrame:
     return df.iloc[::step].copy()
 
 
+def _trace_xy(
+    df: pd.DataFrame,
+    column: str,
+    max_points: int,
+    gap_threshold: str | pd.Timedelta | None,
+):
+    """Готовит одну серию, сохраняя реальные разрывы при прореживании."""
+    if gap_threshold is None or not isinstance(df.index, pd.DatetimeIndex):
+        df_plot = _stride(df[[column]], max_points)
+        return df_plot.index, df_plot[column]
+
+    threshold = pd.Timedelta(gap_threshold)
+    if threshold <= pd.Timedelta(0):
+        raise ValueError("gap_threshold должен быть больше нуля")
+
+    # Ipeak и Upeak могут иметь разные временные метки, поэтому разрывы
+    # определяем отдельно по непустым значениям каждой отображаемой серии.
+    series = df[column].dropna().sort_index()
+    if series.empty:
+        return series.index, series
+
+    gap_starts = series.index.to_series().diff().gt(threshold)
+    gap_starts.iloc[0] = False
+    segment_ids = gap_starts.cumsum().to_numpy()
+
+    if len(series) > max_points:
+        step = ceil(len(series) / max_points)
+        keep = set(range(0, len(series), step))
+        keep.update((0, len(series) - 1))
+
+        # Границы каждого непрерывного участка нельзя удалять прореживанием.
+        for pos, is_gap_start in enumerate(gap_starts.to_numpy()):
+            if is_gap_start:
+                keep.update((pos - 1, pos))
+
+        positions = sorted(keep)
+        series = series.iloc[positions]
+        segment_ids = segment_ids[positions]
+
+    x_values = []
+    y_values = []
+    previous_segment = None
+    previous_timestamp = None
+
+    for (timestamp, value), segment_id in zip(series.items(), segment_ids):
+        if previous_segment is not None and segment_id != previous_segment:
+            separator_time = previous_timestamp + (timestamp - previous_timestamp) / 2
+            x_values.append(separator_time)
+            y_values.append(float("nan"))
+
+        x_values.append(timestamp)
+        y_values.append(value)
+        previous_segment = segment_id
+        previous_timestamp = timestamp
+
+    return x_values, y_values
+
+
 def _theme_params(theme_base: str | None):
     base = (theme_base or "light").lower()
     if base == "dark":
@@ -47,6 +105,7 @@ def main_chart(
     height: int,
     theme_base: str | None = None,
     separate_axes: Set[str] | None = None,
+    gap_threshold: str | pd.Timedelta | None = None,
 ) -> go.Figure:
     """
     Сводный график (часовой режим):
@@ -85,21 +144,21 @@ def main_chart(
     present = [c for c in series if c in df.columns]
     if not present:
         return fig
-    df_plot = _stride(df[present], MAX_POINTS_MAIN)
-
     cw = list(params["colorway"])
     color_map: Dict[str, str] = {c: cw[i % len(cw)] for i, c in enumerate(present)}
 
     # Базовые серии
     base_series = [c for c in present if c not in separate_axes]
     for c in base_series:
+        x_values, y_values = _trace_xy(df, c, MAX_POINTS_MAIN, gap_threshold)
         fig.add_trace(
             go.Scattergl(
-                x=df_plot.index,
-                y=df_plot[c],
+                x=x_values,
+                y=y_values,
                 mode="lines",
                 name=c,
                 line=dict(color=color_map[c]),
+                connectgaps=False,
                 hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
             )
         )
@@ -111,6 +170,7 @@ def main_chart(
 
     axis_idx = 1
     for j, c in enumerate([s for s in present if s in separate_axes]):
+        x_values, y_values = _trace_xy(df, c, MAX_POINTS_MAIN, gap_threshold)
         axis_idx += 1
         yaxis_name = f"yaxis{axis_idx}"
         yref = f"y{axis_idx}"
@@ -133,12 +193,13 @@ def main_chart(
 
         fig.add_trace(
             go.Scattergl(
-                x=df_plot.index,
-                y=df_plot[c],
+                x=x_values,
+                y=y_values,
                 mode="lines",
                 name=c,
                 yaxis=yref,
                 line=dict(color=color_map[c]),
+                connectgaps=False,
                 hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
             )
         )
@@ -172,6 +233,7 @@ def group_panel(
     theme_base: str | None = None,
     *,
     max_points: int | None = None,
+    gap_threshold: str | pd.Timedelta | None = None,
 ) -> go.Figure:
     """Группа: одна левая ось, без подписей; легенда снизу."""
     params = _theme_params(theme_base)
@@ -203,15 +265,16 @@ def group_panel(
         return fig
 
     mp = MAX_POINTS_GROUP if max_points is None else int(max_points)
-    df_plot = _stride(df[present], mp)
 
     for c in present:
+        x_values, y_values = _trace_xy(df, c, mp, gap_threshold)
         fig.add_trace(
             go.Scattergl(
-                x=df_plot.index,
-                y=df_plot[c],
+                x=x_values,
+                y=y_values,
                 mode="lines",
                 name=c,
+                connectgaps=False,
                 hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
             )
         )
@@ -226,6 +289,7 @@ def minutely_summary_chart(
     *,
     u_prefix: str = "Upeak_",
     i_prefix: str = "Ipeak_",
+    gap_threshold: str | pd.Timedelta | None = None,
 ) -> go.Figure:
     """
     Минутный сводный (Ipeak+Upeak):
@@ -274,35 +338,38 @@ def minutely_summary_chart(
 
     # порядок: сначала I (слева), затем U (справа) — стабильное назначение цветов
     ordered = i_cols + u_cols
-    df_plot = _stride(df[ordered], MAX_POINTS_MINUTE_MAIN)
 
     cw = list(params["colorway"])
     color_map: Dict[str, str] = {c: cw[i % len(cw)] for i, c in enumerate(ordered)}
 
     # Ipeak -> левая ось
     for c in i_cols:
+        x_values, y_values = _trace_xy(df, c, MAX_POINTS_MINUTE_MAIN, gap_threshold)
         fig.add_trace(
             go.Scattergl(
-                x=df_plot.index,
-                y=df_plot[c],
+                x=x_values,
+                y=y_values,
                 mode="lines",
                 name=c,
                 yaxis="y",
                 line=dict(color=color_map[c]),
+                connectgaps=False,
                 hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
             )
         )
 
     # Upeak -> правая ось
     for c in u_cols:
+        x_values, y_values = _trace_xy(df, c, MAX_POINTS_MINUTE_MAIN, gap_threshold)
         fig.add_trace(
             go.Scattergl(
-                x=df_plot.index,
-                y=df_plot[c],
+                x=x_values,
+                y=y_values,
                 mode="lines",
                 name=c,
                 yaxis="y2",
                 line=dict(color=color_map[c]),
+                connectgaps=False,
                 hovertemplate="%{x}<br>" + c + ": %{y}<extra></extra>",
             )
         )
