@@ -18,6 +18,9 @@ from ui.minute_picker import render_date_hour_minute_picker
 from ui.date_format import format_date_minute_ru
 
 
+MINUTELY_GAP_THRESHOLD = pd.Timedelta(milliseconds=40)
+
+
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
@@ -222,7 +225,12 @@ def render_minutely_mode() -> None:
 
     # --- График 1: сводный (две оси: I слева, U справа) ---
     token_sum = refresh_bar("Минутный сводный график: Ipeak + Upeak", "minutely_summary")
-    fig_sum = minutely_summary_chart(df_current, height=PLOT_HEIGHT, theme_base=theme_base)
+    fig_sum = minutely_summary_chart(
+        df_current,
+        height=PLOT_HEIGHT,
+        theme_base=theme_base,
+        gap_threshold=MINUTELY_GAP_THRESHOLD,
+    )
     st.plotly_chart(
         fig_sum,
         use_container_width=True,
@@ -240,6 +248,7 @@ def render_minutely_mode() -> None:
             height=PLOT_HEIGHT,
             theme_base=theme_base,
             max_points=MAX_POINTS_MINUTE_GROUP,
+            gap_threshold=MINUTELY_GAP_THRESHOLD,
         )
         st.plotly_chart(
             fig_i,
@@ -260,6 +269,7 @@ def render_minutely_mode() -> None:
             height=PLOT_HEIGHT,
             theme_base=theme_base,
             max_points=MAX_POINTS_MINUTE_GROUP,
+            gap_threshold=MINUTELY_GAP_THRESHOLD,
         )
         st.plotly_chart(
             fig_u,
