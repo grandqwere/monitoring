@@ -47,13 +47,13 @@ def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = 
     # Текущая выбранная дата
     selected_date = st.session_state.get("selected_minute_date") or st.session_state.get("selected_date") or date.today()
 
-    # Текущий выбранный час (для показа сетки минут)
+    # Текущий выбранный час (для показа сетки минут). После перехода из
+    # суточного режима час намеренно остаётся невыбранным.
     selected_hour = st.session_state.get("selected_minute_hour")
-    if selected_hour is None:
+    if selected_hour is None and st.session_state.get("current_minute_date") == selected_date:
         selected_hour = st.session_state.get("current_minute_hour")
-    if selected_hour is None:
-        selected_hour = 0
-    selected_hour = int(selected_hour)
+    if selected_hour is not None:
+        selected_hour = int(selected_hour)
 
     with st.expander("Выбрать дату, час и минуту", expanded=expanded):
         # Дата
@@ -80,7 +80,7 @@ def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = 
                     continue
 
                 # ВАЖНО: подсвечиваем выбранный час сразу, а также уже загруженные часы
-                is_selected_hour = (h == selected_hour)
+                is_selected_hour = (selected_hour is not None and h == selected_hour)
                 is_loaded_hour = (h in loaded_hours_set)
                 primary = is_selected_hour or is_loaded_hour
 
@@ -97,7 +97,14 @@ def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = 
 
         # После возможного клика по часу он будет в session_state на следующем прогоне,
         # но мы берём актуальное значение из session_state (после rerun).
-        selected_hour = int(st.session_state.get("selected_minute_hour", selected_hour))
+        selected_hour = st.session_state.get("selected_minute_hour", selected_hour)
+        if selected_hour is not None:
+            selected_hour = int(selected_hour)
+
+        if selected_hour is None:
+            st.caption("Выберите час для отображения минут.")
+            return selected_date, None, None
+
         st.caption(f"Выбранный час для минут: {selected_hour:02d}:xx")
 
         # Минуты, уже загруженные на график за выбранный час
