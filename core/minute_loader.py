@@ -143,6 +143,7 @@ def set_only_minute(d: date_cls, h: int, m: int) -> bool:
     st.session_state["current_minute_hour"] = h
     st.session_state["current_minute_minute"] = m
     st.session_state["selected_minute_date"] = d
+    st.session_state["selected_minute_hour"] = h
     return True
 
 
@@ -165,6 +166,7 @@ def append_minute(d: date_cls, h: int, m: int) -> bool:
 
     st.session_state["current_minute_date"], st.session_state["current_minute_hour"], st.session_state["current_minute_minute"] = lm[-1]
     st.session_state["selected_minute_date"] = st.session_state["current_minute_date"]
+    st.session_state["selected_minute_hour"] = st.session_state["current_minute_hour"]
     return True
 
 
