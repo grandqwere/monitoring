@@ -264,6 +264,9 @@ def render_daily_mode() -> None:
                  ["U_L1_L2", "U_L2_L3", "U_L3_L1"], PLOT_HEIGHT, theme_base, all_token_daily)
     render_group("Коэффициент мощности (PF)", "daily_grp_pf", df_mean,
                  ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, all_token_daily)
+    render_group("Углы между фазами, °", "daily_grp_angles", df_mean,
+                 ["angle_L1_L2", "angle_L2_L3", "angle_L3_L1"],
+                 PLOT_HEIGHT, theme_base, all_token_daily)
 
     freq_cols = [
         c for c in df_mean.columns
