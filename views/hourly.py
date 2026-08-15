@@ -203,6 +203,11 @@ def render_hourly_mode() -> None:
         ["pf_total", "pf_L1", "pf_L2", "pf_L3"], PLOT_HEIGHT, theme_base, ALL_TOKEN,
         gap_threshold=HOURLY_GAP_THRESHOLD,
     )
+    render_group(
+        "Углы между фазами, °", "grp_angles", df_current,
+        ["angle_L1_L2", "angle_L2_L3", "angle_L3_L1"], PLOT_HEIGHT, theme_base, ALL_TOKEN,
+        gap_threshold=HOURLY_GAP_THRESHOLD,
+    )
 
     freq_cols = [c for c in df_current.columns if pd.api.types.is_numeric_dtype(df_current[c]) and (("freq" in c.lower()) or ("frequency" in c.lower()) or ("hz" in c.lower()) or (c.lower() == "f"))]
     if freq_cols:
