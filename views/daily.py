@@ -111,6 +111,8 @@ def _load_full_day(day: date_cls, *, force_reload: bool = False) -> tuple[pd.Dat
 def render_daily_mode() -> None:
     st.markdown("### День")
 
+    selection_from_mode = bool(st.session_state.pop("__daily_selection_from_mode", False))
+
     if "__daily_first_entry_done" not in st.session_state:
         st.session_state["__daily_first_entry_done"] = True
 
@@ -119,16 +121,19 @@ def render_daily_mode() -> None:
         today = date_cls.today()
         if "selected_day" not in st.session_state or st.session_state["selected_day"] is None:
             st.session_state["selected_day"] = today
-        try:
-            sel = st.session_state.get("selected_day")
-            if sel and (not all_day_has_any_data(sel)):
-                last_day = s3_latest_available_day_all()
-                if last_day is not None and last_day != sel:
-                    st.session_state["selected_day"] = last_day
-                    st.rerun()
-        except Exception:
-            # если S3 недоступен/ошибка — просто не автопереключаем
-            pass
+        # Дату, явно перенесённую из другого режима, не подменяем. Автовыбор
+        # последнего доступного дня нужен только при первоначальном открытии.
+        if not selection_from_mode:
+            try:
+                sel = st.session_state.get("selected_day")
+                if sel and (not all_day_has_any_data(sel)):
+                    last_day = s3_latest_available_day_all()
+                    if last_day is not None and last_day != sel:
+                        st.session_state["selected_day"] = last_day
+                        st.rerun()
+            except Exception:
+                # если S3 недоступен/ошибка — просто не автопереключаем
+                pass
 
     if "selected_day" not in st.session_state:
         st.session_state["selected_day"] = date_cls.today()
