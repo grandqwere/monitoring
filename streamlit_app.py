@@ -100,6 +100,10 @@ def _clear_all_caches():
         "__minute_picker_redraw",
         "refresh_minutely_all",
 
+        # общий контекст переключения режимов
+        "__mode_context_date", "__mode_context_hour",
+        "__daily_selection_from_mode",
+
         # header
         "__measurement_period_all",
 
@@ -389,14 +393,20 @@ with nav_left:
 with nav_right:
     download_ph = st.empty()
 
+previous_mode = st.session_state["mode"]
+
 if chosen == "Минутные":
-    st.session_state["mode"] = "minutely"
+    target_mode = "minutely"
 elif chosen == "Часовые":
-    st.session_state["mode"] = "hourly"
+    target_mode = "hourly"
 elif chosen == "Статистические":
-    st.session_state["mode"] = "statistical"
+    target_mode = "statistical"
 else:
-    st.session_state["mode"] = "daily"
+    target_mode = "daily"
+
+if target_mode != previous_mode:
+    state.synchronize_mode_selection(previous_mode, target_mode)
+st.session_state["mode"] = target_mode
 
 # Роутинг по режимам
 if st.session_state["mode"] == "minutely":
