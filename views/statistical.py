@@ -63,8 +63,8 @@ _POWER_MODE_META: Dict[str, Tuple[str, str, str]] = {
 }
 
 _POWER_AXIS_NAMES: Dict[str, str] = {
-    "P_total": "Активная мощность P",
-    "S_total": "Полная мощность S",
+    "P_total": "Активная мощность   P",
+    "S_total": "Полная мощность   S",
 }
 
 
