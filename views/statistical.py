@@ -62,6 +62,11 @@ _POWER_MODE_META: Dict[str, Tuple[str, str, str]] = {
     "Островной режим (полная мощность)": ("S_total", "S", "кВА"),
 }
 
+_POWER_AXIS_NAMES: Dict[str, str] = {
+    "P_total": "Активная мощность P",
+    "S_total": "Полная мощность S",
+}
+
 
 def _theme_params(theme_base: str | None) -> Dict[str, str]:
     base = (theme_base or "light").lower()
@@ -358,12 +363,17 @@ def _make_figure(
         height=_STAT_HEIGHT,
         title=plot_title,
         xaxis_title="Время суток",
-        yaxis_title=f"{target_col}, {unit}",
+        yaxis_title=f"{_POWER_AXIS_NAMES.get(target_col, target_col)}, {unit}",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0),
         margin=dict(l=60, r=20, t=70, b=60),
         plot_bgcolor=params["bg"],
         paper_bgcolor=params["bg"],
-        yaxis=dict(range=[0, y_max * 1.05], showgrid=True, gridcolor=params["grid"]),
+        yaxis=dict(
+            range=[0, y_max * 1.05],
+            showgrid=True,
+            gridcolor=params["grid"],
+            tickformat=".0f",
+        ),
         xaxis=dict(showgrid=True, gridcolor=params["grid"]),
     )
 
