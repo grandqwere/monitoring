@@ -19,6 +19,17 @@ from ui.date_format import format_date_minute_ru
 
 
 MINUTELY_GAP_THRESHOLD = pd.Timedelta(milliseconds=40)
+MINUTELY_TIME_TICK_FORMAT = "%H:%M:%S.%3f"
+MINUTELY_TIME_HOVER_FORMAT = "%d.%m.%Y %H:%M:%S.%3f"
+
+
+def _format_minutely_time_axis(fig):
+    """Фиксирует миллисекунды на оси X и в подсказке при наведении."""
+    fig.update_xaxes(
+        tickformat=MINUTELY_TIME_TICK_FORMAT,
+        hoverformat=MINUTELY_TIME_HOVER_FORMAT,
+    )
+    return fig
 
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
@@ -231,6 +242,7 @@ def render_minutely_mode() -> None:
         theme_base=theme_base,
         gap_threshold=MINUTELY_GAP_THRESHOLD,
     )
+    _format_minutely_time_axis(fig_sum)
     st.plotly_chart(
         fig_sum,
         use_container_width=True,
@@ -250,6 +262,7 @@ def render_minutely_mode() -> None:
             max_points=MAX_POINTS_MINUTE_GROUP,
             gap_threshold=MINUTELY_GAP_THRESHOLD,
         )
+        _format_minutely_time_axis(fig_i)
         st.plotly_chart(
             fig_i,
             use_container_width=True,
@@ -271,6 +284,7 @@ def render_minutely_mode() -> None:
             max_points=MAX_POINTS_MINUTE_GROUP,
             gap_threshold=MINUTELY_GAP_THRESHOLD,
         )
+        _format_minutely_time_axis(fig_u)
         st.plotly_chart(
             fig_u,
             use_container_width=True,
