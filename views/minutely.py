@@ -19,8 +19,8 @@ from ui.date_format import format_date_minute_ru
 
 
 MINUTELY_GAP_THRESHOLD = pd.Timedelta(milliseconds=40)
-MINUTELY_TIME_TICK_FORMAT = "%H:%M:%S.%3f"
-MINUTELY_TIME_HOVER_FORMAT = "%d.%m.%Y %H:%M:%S.%3f"
+MINUTELY_TIME_TICK_FORMAT = "%H:%M:%S.%L"
+MINUTELY_TIME_HOVER_FORMAT = "%d.%m.%Y %H:%M:%S.%L"
 
 
 def _format_minutely_time_axis(fig):
