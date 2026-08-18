@@ -17,6 +17,12 @@ from ui.day import render_day_picker, day_nav_buttons
 from ui.date_format import format_date_ru
 from core.data_io import all_day_has_any_data, s3_latest_available_day_all
 
+
+def _daily_heading(day: date_cls | None) -> str:
+    """Заголовок страницы: выбранная дата либо приглашение к выбору."""
+    return format_date_ru(day) or "Дата"
+
+
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for c in df.columns:
@@ -109,7 +115,8 @@ def _load_full_day(day: date_cls, *, force_reload: bool = False) -> tuple[pd.Dat
 
 
 def render_daily_mode() -> None:
-    st.markdown("### День")
+    heading_ph = st.empty()
+    heading_ph.markdown(f"### {_daily_heading(st.session_state.get('selected_day'))}")
 
     selection_from_mode = bool(st.session_state.pop("__daily_selection_from_mode", False))
 
@@ -139,6 +146,7 @@ def render_daily_mode() -> None:
         st.session_state["selected_day"] = date_cls.today()
 
     day = render_day_picker()
+    heading_ph.markdown(f"### {_daily_heading(day)}")
     day_nav_buttons(enabled=day is not None)
 
     if not day:
