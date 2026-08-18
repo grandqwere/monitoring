@@ -10,24 +10,35 @@ from ui.refresh import refresh_bar
 from ui.picker import render_date_hour_picker
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
-from ui.date_format import format_date_hour_ru
+from ui.date_format import format_date_hour_ru, format_date_weekday_ru
 
 
 HOURLY_GAP_THRESHOLD = pd.Timedelta(seconds=1)
 
 
 def _hourly_heading(date_obj, hour: int | None) -> str:
-    """Заголовок страницы: последний выбранный час либо приглашение к выбору."""
-    if date_obj is None or hour is None:
+    """Заголовок страницы с выбранной датой и состоянием выбора часа."""
+    day_label = format_date_weekday_ru(date_obj)
+    if not day_label:
         return "Дата и час"
+    if hour is None:
+        return f"{day_label}, выберите час"
     try:
-        label = format_date_hour_ru(date_obj, int(hour))
+        selected_hour = int(hour)
     except (TypeError, ValueError):
-        return "Дата и час"
-    if not label:
-        return "Дата и час"
-    day_label, time_label = label.rsplit(" ", 1)
-    return f"{day_label}, {time_label}"
+        return f"{day_label}, выберите час"
+    if not 0 <= selected_hour <= 23:
+        return f"{day_label}, выберите час"
+    return f"{day_label}, {selected_hour:02d}:00"
+
+
+def _update_hourly_heading(heading_ph) -> None:
+    """Обновляет верхний заголовок по текущему выбору пикера."""
+    selected_date = st.session_state.get("selected_date")
+    selected_hour = st.session_state.get("current_hour")
+    if st.session_state.get("current_date") != selected_date:
+        selected_hour = None
+    heading_ph.markdown(f"### {_hourly_heading(selected_date, selected_hour)}")
 
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
@@ -95,9 +106,7 @@ def _redraw_picker(picker_ph) -> None:
 def render_hourly_mode() -> None:
     # Плейсхолдер сохраняет заголовок наверху, а значение обновляется после выбора/навигации.
     heading_ph = st.empty()
-    heading_ph.markdown(
-        f"### {_hourly_heading(st.session_state.get('current_date'), st.session_state.get('current_hour'))}"
-    )
+    _update_hourly_heading(heading_ph)
 
     # Плейсхолдеры: сначала пикер, затем статус — порядок фиксирован
     picker_ph = st.empty()
@@ -147,9 +156,7 @@ def render_hourly_mode() -> None:
             if _load_with_status_append(dt.date(), dt.hour, status_area=status_ph):
                 _redraw_picker(picker_ph)
 
-    heading_ph.markdown(
-        f"### {_hourly_heading(st.session_state.get('current_date'), st.session_state.get('current_hour'))}"
-    )
+    _update_hourly_heading(heading_ph)
 
     # 4) Если нет данных — подскажем и завершим режим
     if not st.session_state.get("loaded_hours"):
