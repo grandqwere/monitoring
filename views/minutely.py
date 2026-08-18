@@ -23,6 +23,20 @@ MINUTELY_TIME_TICK_FORMAT = "%H:%M:%S.%L"
 MINUTELY_TIME_HOVER_FORMAT = "%d.%m.%Y %H:%M:%S.%L"
 
 
+def _minutely_heading(date_obj, hour: int | None, minute: int | None) -> str:
+    """Заголовок страницы: последняя выбранная минута либо приглашение к выбору."""
+    if date_obj is None or hour is None or minute is None:
+        return "Дата, час и минута"
+    try:
+        label = format_date_minute_ru(date_obj, int(hour), int(minute))
+    except (TypeError, ValueError):
+        return "Дата, час и минута"
+    if not label:
+        return "Дата, час и минута"
+    day_label, time_label = label.rsplit(" ", 1)
+    return f"{day_label}, {time_label}"
+
+
 def _format_minutely_time_axis(fig):
     """Фиксирует миллисекунды на оси X и в подсказке при наведении."""
     fig.update_xaxes(
@@ -110,7 +124,11 @@ def _redraw_picker(picker_ph) -> None:
 
 
 def render_minutely_mode() -> None:
-    st.markdown("### Дата, час и минута")
+    # Плейсхолдер сохраняет заголовок наверху, а значение обновляется после выбора/навигации.
+    heading_ph = st.empty()
+    heading_ph.markdown(
+        f"### {_minutely_heading(st.session_state.get('current_minute_date'), st.session_state.get('current_minute_hour'), st.session_state.get('current_minute_minute'))}"
+    )
 
     picker_ph = st.empty()
     status_ph = st.empty()
@@ -164,6 +182,10 @@ def render_minutely_mode() -> None:
             dt = base_dt + timedelta(minutes=+1)
             if _load_with_status_append(dt.date(), dt.hour, dt.minute, status_area=status_ph):
                 _redraw_picker(picker_ph)
+
+    heading_ph.markdown(
+        f"### {_minutely_heading(st.session_state.get('current_minute_date'), st.session_state.get('current_minute_hour'), st.session_state.get('current_minute_minute'))}"
+    )
 
     # 4) Если нет данных — завершаем режим
     if not st.session_state.get("loaded_minutes"):
