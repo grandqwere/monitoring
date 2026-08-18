@@ -27,10 +27,13 @@ def _mark_hour(hour: int) -> None:
 
 
 def _mark_pending(date_obj: date, hour: int, minute: int) -> None:
-    """Пометить выбранную минуту для обработки в начале следующего прогона."""
+    """Запомнить выбранную минуту и пометить её для загрузки на следующем прогоне."""
+    hour = int(hour)
+    minute = int(minute)
+    st.session_state["selected_minute_choice"] = (date_obj, hour, minute)
     st.session_state["__pending_minute_date"] = date_obj
-    st.session_state["__pending_minute_hour"] = int(hour)
-    st.session_state["__pending_minute_minute"] = int(minute)
+    st.session_state["__pending_minute_hour"] = hour
+    st.session_state["__pending_minute_minute"] = minute
 
 
 def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = True) -> tuple[date, int | None, int | None]:
@@ -39,9 +42,10 @@ def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = 
 
     Требования:
       - Час должен подсвечиваться СРАЗУ после клика по часу (даже если минуту ещё не выбирали).
+      - Выбранная минута подсвечивается сразу после клика, даже если данных за неё нет.
       - Также подсвечиваем часы/минуты, которые уже загружены на график (loaded_minutes).
 
-    Клик по минуте пишет __pending_minute_* (date/hour/minute).
+    Клик по минуте запоминает выбор и пишет __pending_minute_* (date/hour/minute).
     Возвращаем (date, hour, None) — минуту отдаём через pending.
     """
     # Текущая выбранная дата
@@ -110,6 +114,10 @@ def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = 
         # Минуты, уже загруженные на график за выбранный час
         loaded_min_set_for_hour = {m for (h, m) in loaded_for_day if h == selected_hour}
 
+        # Последняя минута, выбранная пользователем. Храним полный контекст
+        # (дата, час, минута), чтобы подсветка не переходила на другой час/день.
+        selected_minute_choice = st.session_state.get("selected_minute_choice")
+
         # Сетка минут 00..59 (6x10)
         st.markdown("**Минута:**")
         for row in range(6):
@@ -118,6 +126,7 @@ def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = 
                 minute = row * 10 + j
                 if minute > 59:
                     continue
+                is_selected_min = selected_minute_choice == (selected_date, selected_hour, minute)
                 is_loaded_min = minute in loaded_min_set_for_hour
                 label = f"{minute:02d}"
                 key = f"{key_prefix}min_{selected_date.isoformat()}_{selected_hour:02d}_{minute:02d}"
@@ -125,7 +134,7 @@ def render_date_hour_minute_picker(*, key_prefix: str = "mp_", expanded: bool = 
                     cols[j],
                     label,
                     key,
-                    primary=is_loaded_min,
+                    primary=(is_selected_min or is_loaded_min),
                     on_click=_mark_pending,
                     args=(selected_date, selected_hour, minute),
                 )
