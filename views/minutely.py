@@ -52,11 +52,25 @@ def _update_minutely_heading(heading_ph) -> None:
     selected_date = st.session_state.get("selected_minute_date")
     selected_hour = st.session_state.get("selected_minute_hour")
     selected_minute = None
+
+    # Сначала показываем минуту, которую пользователь выбрал в пикере.
+    # Этот выбор сохраняется даже тогда, когда данных за минуту нет.
+    selected_choice = st.session_state.get("selected_minute_choice")
     if (
+        isinstance(selected_choice, tuple)
+        and len(selected_choice) == 3
+        and selected_choice[0] == selected_date
+        and selected_choice[1] == selected_hour
+    ):
+        selected_minute = selected_choice[2]
+
+    # Для навигации по успешно загруженным минутам сохраняем прежний fallback.
+    if selected_minute is None and (
         st.session_state.get("current_minute_date") == selected_date
         and st.session_state.get("current_minute_hour") == selected_hour
     ):
         selected_minute = st.session_state.get("current_minute_minute")
+
     heading_ph.markdown(
         f"### {_minutely_heading(selected_date, selected_hour, selected_minute)}"
     )
