@@ -16,6 +16,20 @@ from ui.date_format import format_date_hour_ru
 HOURLY_GAP_THRESHOLD = pd.Timedelta(seconds=1)
 
 
+def _hourly_heading(date_obj, hour: int | None) -> str:
+    """Заголовок страницы: последний выбранный час либо приглашение к выбору."""
+    if date_obj is None or hour is None:
+        return "Дата и час"
+    try:
+        label = format_date_hour_ru(date_obj, int(hour))
+    except (TypeError, ValueError):
+        return "Дата и час"
+    if not label:
+        return "Дата и час"
+    day_label, time_label = label.rsplit(" ", 1)
+    return f"{day_label}, {time_label}"
+
+
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for c in df.columns:
@@ -79,8 +93,11 @@ def _redraw_picker(picker_ph) -> None:
 
 
 def render_hourly_mode() -> None:
-    # Заголовок
-    st.markdown("### Дата и час")
+    # Плейсхолдер сохраняет заголовок наверху, а значение обновляется после выбора/навигации.
+    heading_ph = st.empty()
+    heading_ph.markdown(
+        f"### {_hourly_heading(st.session_state.get('current_date'), st.session_state.get('current_hour'))}"
+    )
 
     # Плейсхолдеры: сначала пикер, затем статус — порядок фиксирован
     picker_ph = st.empty()
@@ -129,6 +146,10 @@ def render_hourly_mode() -> None:
             dt = datetime(base_d.year, base_d.month, base_d.day, base_h) + timedelta(hours=+1)
             if _load_with_status_append(dt.date(), dt.hour, status_area=status_ph):
                 _redraw_picker(picker_ph)
+
+    heading_ph.markdown(
+        f"### {_hourly_heading(st.session_state.get('current_date'), st.session_state.get('current_hour'))}"
+    )
 
     # 4) Если нет данных — подскажем и завершим режим
     if not st.session_state.get("loaded_hours"):
