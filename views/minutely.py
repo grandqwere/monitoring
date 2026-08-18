@@ -29,13 +29,13 @@ def _minutely_heading(date_obj, hour: int | None, minute: int | None) -> str:
     if not day_label:
         return "Дата, час и минута"
     if hour is None:
-        return f"{day_label}, выберите час"
+        return f"{day_label}, выберите час и минуту"
     try:
         selected_hour = int(hour)
     except (TypeError, ValueError):
-        return f"{day_label}, выберите час"
+        return f"{day_label}, выберите час и минуту"
     if not 0 <= selected_hour <= 23:
-        return f"{day_label}, выберите час"
+        return f"{day_label}, выберите час и минуту"
     if minute is None:
         return f"{day_label}, {selected_hour:02d}:00, выберите минуту"
     try:
