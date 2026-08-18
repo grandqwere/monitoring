@@ -15,7 +15,7 @@ from core.minute_loader import (
 from core.plotting import minutely_summary_chart, group_panel
 from ui.refresh import refresh_bar
 from ui.minute_picker import render_date_hour_minute_picker
-from ui.date_format import format_date_minute_ru
+from ui.date_format import format_date_minute_ru, format_date_weekday_ru
 
 
 MINUTELY_GAP_THRESHOLD = pd.Timedelta(milliseconds=40)
@@ -24,17 +24,42 @@ MINUTELY_TIME_HOVER_FORMAT = "%d.%m.%Y %H:%M:%S.%L"
 
 
 def _minutely_heading(date_obj, hour: int | None, minute: int | None) -> str:
-    """Заголовок страницы: последняя выбранная минута либо приглашение к выбору."""
-    if date_obj is None or hour is None or minute is None:
+    """Заголовок страницы с состоянием выбора часа и минуты."""
+    day_label = format_date_weekday_ru(date_obj)
+    if not day_label:
         return "Дата, час и минута"
+    if hour is None:
+        return f"{day_label}, выберите час"
     try:
-        label = format_date_minute_ru(date_obj, int(hour), int(minute))
+        selected_hour = int(hour)
     except (TypeError, ValueError):
-        return "Дата, час и минута"
-    if not label:
-        return "Дата, час и минута"
-    day_label, time_label = label.rsplit(" ", 1)
-    return f"{day_label}, {time_label}"
+        return f"{day_label}, выберите час"
+    if not 0 <= selected_hour <= 23:
+        return f"{day_label}, выберите час"
+    if minute is None:
+        return f"{day_label}, {selected_hour:02d}:00, выберите минуту"
+    try:
+        selected_minute = int(minute)
+    except (TypeError, ValueError):
+        return f"{day_label}, {selected_hour:02d}:00, выберите минуту"
+    if not 0 <= selected_minute <= 59:
+        return f"{day_label}, {selected_hour:02d}:00, выберите минуту"
+    return f"{day_label}, {selected_hour:02d}:{selected_minute:02d}"
+
+
+def _update_minutely_heading(heading_ph) -> None:
+    """Обновляет верхний заголовок по текущему выбору пикера."""
+    selected_date = st.session_state.get("selected_minute_date")
+    selected_hour = st.session_state.get("selected_minute_hour")
+    selected_minute = None
+    if (
+        st.session_state.get("current_minute_date") == selected_date
+        and st.session_state.get("current_minute_hour") == selected_hour
+    ):
+        selected_minute = st.session_state.get("current_minute_minute")
+    heading_ph.markdown(
+        f"### {_minutely_heading(selected_date, selected_hour, selected_minute)}"
+    )
 
 
 def _format_minutely_time_axis(fig):
@@ -126,9 +151,7 @@ def _redraw_picker(picker_ph) -> None:
 def render_minutely_mode() -> None:
     # Плейсхолдер сохраняет заголовок наверху, а значение обновляется после выбора/навигации.
     heading_ph = st.empty()
-    heading_ph.markdown(
-        f"### {_minutely_heading(st.session_state.get('current_minute_date'), st.session_state.get('current_minute_hour'), st.session_state.get('current_minute_minute'))}"
-    )
+    _update_minutely_heading(heading_ph)
 
     picker_ph = st.empty()
     status_ph = st.empty()
@@ -183,9 +206,7 @@ def render_minutely_mode() -> None:
             if _load_with_status_append(dt.date(), dt.hour, dt.minute, status_area=status_ph):
                 _redraw_picker(picker_ph)
 
-    heading_ph.markdown(
-        f"### {_minutely_heading(st.session_state.get('current_minute_date'), st.session_state.get('current_minute_hour'), st.session_state.get('current_minute_minute'))}"
-    )
+    _update_minutely_heading(heading_ph)
 
     # 4) Если нет данных — завершаем режим
     if not st.session_state.get("loaded_minutes"):
