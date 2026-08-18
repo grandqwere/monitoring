@@ -14,13 +14,13 @@ from ui.refresh import refresh_bar
 from ui.summary import render_summary_controls
 from ui.groups import render_group, render_power_group
 from ui.day import render_day_picker, day_nav_buttons
-from ui.date_format import format_date_ru
+from ui.date_format import format_date_ru, format_date_weekday_ru
 from core.data_io import all_day_has_any_data, s3_latest_available_day_all
 
 
 def _daily_heading(day: date_cls | None) -> str:
     """Заголовок страницы: выбранная дата либо приглашение к выбору."""
-    return format_date_ru(day) or "Дата"
+    return format_date_weekday_ru(day) or "Дата"
 
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
