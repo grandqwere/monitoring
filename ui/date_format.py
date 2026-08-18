@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 
 DATE_INPUT_FORMAT = "DD.MM.YYYY"
+WEEKDAY_ABBR_RU = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 
 
 def format_date_ru(value: date | datetime | None) -> str:
@@ -14,6 +15,18 @@ def format_date_ru(value: date | datetime | None) -> str:
         return value.strftime("%d.%m.%Y")
     except Exception:
         return ""
+
+
+def format_date_weekday_ru(value: date | datetime | None) -> str:
+    """Форматирует дату с русским сокращением дня недели."""
+    day = format_date_ru(value)
+    if not day:
+        return ""
+    try:
+        weekday = WEEKDAY_ABBR_RU[value.weekday()]
+    except (AttributeError, IndexError, TypeError):
+        return day
+    return f"{day} ({weekday})"
 
 
 def format_datetime_ru(value: date | datetime | None) -> str:
