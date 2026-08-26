@@ -188,30 +188,23 @@ def _iter_valid_fill_segments(
     low_c: str,
     high_c: str,
 ) -> List[Tuple[pd.Index, pd.Series, pd.Series]]:
-    """Возвращает непрерывные валидные сегменты для заливки между low/high.
-
-    Plotly `fill="tonexty"` на трассах с пропусками может рисовать ложные большие
-    полигоны между разорванными участками. Поэтому серые интервалы строим только по
-    непрерывным сегментам, где обе границы интервала заданы.
-    """
+    """Непрерывные участки, где обе границы интервала имеют данные."""
     if low_c not in df.columns or high_c not in df.columns:
         return []
 
     low = pd.to_numeric(df[low_c], errors="coerce")
     high = pd.to_numeric(df[high_c], errors="coerce")
-    valid = (low.notna() & high.notna()).to_numpy()
-    valid_idx = np.flatnonzero(valid)
+    valid_idx = np.flatnonzero((low.notna() & high.notna()).to_numpy())
     if valid_idx.size == 0:
         return []
 
     breaks = np.where(np.diff(valid_idx) > 1)[0] + 1
-    segments: List[Tuple[pd.Index, pd.Series, pd.Series]] = []
+    out: List[Tuple[pd.Index, pd.Series, pd.Series]] = []
     for seg_idx in np.split(valid_idx, breaks):
         if len(seg_idx) < 2:
-            # Для одной точки площадь нулевая; пропускаем, чтобы не плодить артефакты.
             continue
-        segments.append((df.index[seg_idx], low.iloc[seg_idx], high.iloc[seg_idx]))
-    return segments
+        out.append((df.index[seg_idx], low.iloc[seg_idx], high.iloc[seg_idx]))
+    return out
 
 
 def _compute_global_y_max(
@@ -272,17 +265,14 @@ def _make_figure(
     fig = go.Figure()
 
     # Вложенные серые заливки интервалов (показываются всегда).
-    # Рисуем их по непрерывным валидным сегментам, чтобы Plotly не создавал
-    # ложные большие полигоны через NaN-разрывы.
+    # Каждый непрерывный участок рисуется отдельно: заливка не перескакивает через NaN.
     for lbl, low_c, high_c in _iter_intervals_for_fill(intervals):
         fillcolor = _FILL_COLORS.get(lbl, "rgba(0,0,0,0.12)")
         for seg_x, seg_low, seg_high in _iter_valid_fill_segments(df, low_c, high_c):
-            x_fill = list(seg_x) + list(seg_x[::-1])
-            y_fill = list(seg_high) + list(seg_low.iloc[::-1])
             fig.add_trace(
                 go.Scatter(
-                    x=x_fill,
-                    y=y_fill,
+                    x=list(seg_x) + list(seg_x[::-1]),
+                    y=list(seg_high) + list(seg_low.iloc[::-1]),
                     mode="lines",
                     name=f"__fill_{lbl}__",
                     line=dict(width=0),
@@ -399,7 +389,11 @@ def _make_figure(
             gridcolor=params["grid"],
             tickformat=".0f",
         ),
-        xaxis=dict(showgrid=True, gridcolor=params["grid"]),
+        xaxis=dict(
+            range=[pd.Timestamp("2000-01-01 00:00:00"), pd.Timestamp("2000-01-02 00:00:00")],
+            showgrid=True,
+            gridcolor=params["grid"],
+        ),
     )
 
     # Ось X: подпись каждого часа
