@@ -7,7 +7,11 @@
   + = поток в сторону объекта, - = поток из объекта;
 - P/Q по фазам суммируются по 4 файлам;
 - P_total/Q_total считаются из фаз;
-- S по фазам считается из P/Q, S_total = сумма S фаз;
+- N трактуется как полная неактивная мощность, уже содержащая Q;
+- для каждого входа остаточная составляющая D = sqrt(max(N^2 - Q^2, 0));
+- D четырёх ячеек по одной фазе объединяется как RSS: sqrt(sum(D_i^2));
+- N фазы = sqrt(Q^2 + D^2), S фазы = sqrt(P^2 + N^2);
+- S_total = сумма S фаз, N_total = sqrt(max(S_total^2 - P_total^2, 0));
 - PF считается заново;
 - Irms считается заново из Sфазы и Urmsфазы;
 - U, частота, температура, углы — медиана по 4 файлам;
@@ -17,7 +21,7 @@
   аномально заниженная фаза каждого входного файла;
 - структура и порядок колонок сохраняются как в исходном CSV.
 
-Восстановление по умолчанию отключено. Служебный параметр --stats-out пишет
+В этой версии восстановление отказавшей фазы включено. Служебный параметр --stats-out пишет
 JSON-статистику для управляющего workflow и не изменяет структуру итогового CSV.
 
 Запуск:
@@ -203,7 +207,7 @@ def recover_ct_failures(df: pd.DataFrame) -> tuple[pd.DataFrame, RecoveryStats]:
 
         healthy_values = [
             float(row[f"{parameter}_{phase}"])
-            for parameter in ("P", "Q")
+            for parameter in ("P", "Q", "N")
             for phase in (healthy_first, healthy_second)
         ]
         target_urms = float(row[f"Urms_{suspect_phase}"])
@@ -217,8 +221,15 @@ def recover_ct_failures(df: pd.DataFrame) -> tuple[pd.DataFrame, RecoveryStats]:
 
         p_value = healthy_values[0] / 2.0 + healthy_values[1] / 2.0
         q_value = healthy_values[2] / 2.0 + healthy_values[3] / 2.0
-        s_value = math.hypot(p_value, q_value)
-        n_value = abs(q_value)
+
+        # N уже включает Q. Для имитируемой фазы отдельно восстанавливаем
+        # остаточную неактивную составляющую D по двум исправным фазам.
+        d_first = math.sqrt(max(healthy_values[4] ** 2 - healthy_values[2] ** 2, 0.0))
+        d_second = math.sqrt(max(healthy_values[5] ** 2 - healthy_values[3] ** 2, 0.0))
+        d_value = d_first / 2.0 + d_second / 2.0
+
+        n_value = math.hypot(q_value, d_value)
+        s_value = math.hypot(p_value, n_value)
         pf_value = p_value / s_value if s_value != 0.0 else 0.0
         irms_value = abs(s_value * 1000.0 / target_urms)
         restored_values = [
@@ -364,15 +375,25 @@ def aggregate_frames(frames: List[pd.DataFrame]) -> pd.DataFrame:
     for ph in PHASES:
         out[f"P_{ph}"] = sum(df[f"P_{ph}"] for df in frames)
         out[f"Q_{ph}"] = sum(df[f"Q_{ph}"] for df in frames)
-        out[f"S_{ph}"] = (out[f"P_{ph}"] ** 2 + out[f"Q_{ph}"] ** 2) ** 0.5
-        out[f"N_{ph}"] = out[f"Q_{ph}"].abs()
+
+        # В исходных данных N — полная неактивная мощность: N^2 = Q^2 + D^2.
+        # Фаз гармоник в секундном CSV нет, поэтому D разных ячеек объединяется
+        # инженерным приближением RSS (некоррелированные остаточные составляющие).
+        distortion_sq = sum(
+            (df[f"N_{ph}"] ** 2 - df[f"Q_{ph}"] ** 2).clip(lower=0.0)
+            for df in frames
+        )
+        distortion = distortion_sq ** 0.5
+
+        out[f"N_{ph}"] = (out[f"Q_{ph}"] ** 2 + distortion ** 2) ** 0.5
+        out[f"S_{ph}"] = (out[f"P_{ph}"] ** 2 + out[f"N_{ph}"] ** 2) ** 0.5
         out[f"pf_{ph}"] = safe_pf(out[f"P_{ph}"], out[f"S_{ph}"])
         out[f"Irms_{ph}"] = (out[f"S_{ph}"] * 1000.0 / out[f"Urms_{ph}"]).abs()
 
     out["P_total"] = out[["P_L1", "P_L2", "P_L3"]].sum(axis=1)
     out["Q_total"] = out[["Q_L1", "Q_L2", "Q_L3"]].sum(axis=1)
     out["S_total"] = out[["S_L1", "S_L2", "S_L3"]].sum(axis=1)
-    out["N_total"] = out[["N_L1", "N_L2", "N_L3"]].sum(axis=1)
+    out["N_total"] = (out["S_total"] ** 2 - out["P_total"] ** 2).clip(lower=0.0) ** 0.5
     out["pf_total"] = safe_pf(out["P_total"], out["S_total"])
 
     # Если хотя бы один исходный файл содержит неполную строку, сохраняем
