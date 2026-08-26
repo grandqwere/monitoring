@@ -183,6 +183,37 @@ def _compute_y_max(df: pd.DataFrame, cols: List[str]) -> float:
     return y_max
 
 
+def _iter_valid_fill_segments(
+    df: pd.DataFrame,
+    low_c: str,
+    high_c: str,
+) -> List[Tuple[pd.Index, pd.Series, pd.Series]]:
+    """Возвращает непрерывные валидные сегменты для заливки между low/high.
+
+    Plotly `fill="tonexty"` на трассах с пропусками может рисовать ложные большие
+    полигоны между разорванными участками. Поэтому серые интервалы строим только по
+    непрерывным сегментам, где обе границы интервала заданы.
+    """
+    if low_c not in df.columns or high_c not in df.columns:
+        return []
+
+    low = pd.to_numeric(df[low_c], errors="coerce")
+    high = pd.to_numeric(df[high_c], errors="coerce")
+    valid = (low.notna() & high.notna()).to_numpy()
+    valid_idx = np.flatnonzero(valid)
+    if valid_idx.size == 0:
+        return []
+
+    breaks = np.where(np.diff(valid_idx) > 1)[0] + 1
+    segments: List[Tuple[pd.Index, pd.Series, pd.Series]] = []
+    for seg_idx in np.split(valid_idx, breaks):
+        if len(seg_idx) < 2:
+            # Для одной точки площадь нулевая; пропускаем, чтобы не плодить артефакты.
+            continue
+        segments.append((df.index[seg_idx], low.iloc[seg_idx], high.iloc[seg_idx]))
+    return segments
+
+
 def _compute_global_y_max(
     dfs: List[pd.DataFrame | None],
     *,
@@ -240,31 +271,25 @@ def _make_figure(
 
     fig = go.Figure()
 
-    # Вложенные серые заливки интервалов (показываются всегда)
+    # Вложенные серые заливки интервалов (показываются всегда).
+    # Рисуем их по непрерывным валидным сегментам, чтобы Plotly не создавал
+    # ложные большие полигоны через NaN-разрывы.
     for lbl, low_c, high_c in _iter_intervals_for_fill(intervals):
-        if low_c in df.columns and high_c in df.columns:
+        fillcolor = _FILL_COLORS.get(lbl, "rgba(0,0,0,0.12)")
+        for seg_x, seg_low, seg_high in _iter_valid_fill_segments(df, low_c, high_c):
+            x_fill = list(seg_x) + list(seg_x[::-1])
+            y_fill = list(seg_high) + list(seg_low.iloc[::-1])
             fig.add_trace(
                 go.Scatter(
-                    x=df.index,
-                    y=df[low_c],
+                    x=x_fill,
+                    y=y_fill,
                     mode="lines",
-                    name=f"__fill_{lbl}_low__",
+                    name=f"__fill_{lbl}__",
                     line=dict(width=0),
                     showlegend=False,
                     hoverinfo="skip",
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=df.index,
-                    y=df[high_c],
-                    mode="lines",
-                    name=f"__fill_{lbl}_high__",
-                    line=dict(width=0),
-                    showlegend=False,
-                    hoverinfo="skip",
-                    fill="tonexty",
-                    fillcolor=_FILL_COLORS.get(lbl, "rgba(0,0,0,0.12)"),
+                    fill="toself",
+                    fillcolor=fillcolor,
                 )
             )
 
