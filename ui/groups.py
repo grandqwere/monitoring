@@ -21,6 +21,7 @@ def render_group(
     all_token: int,
     *,
     gap_threshold: str | pd.Timedelta | None = None,
+    x_range=None,
 ):
     token = refresh_bar(title, key_suffix)
     present = [c for c in cols if c in df.columns]
@@ -34,6 +35,8 @@ def render_group(
         theme_base=theme_base,
         gap_threshold=gap_threshold,
     )
+    if x_range is not None:
+        fig.update_xaxes(range=x_range)
     st.plotly_chart(fig, use_container_width=True, config={"responsive": True}, key=f"{key_suffix}_{all_token}_{token}")
 
 def render_power_group(
@@ -43,6 +46,7 @@ def render_power_group(
     all_token: int,
     *,
     gap_threshold: str | pd.Timedelta | None = None,
+    x_range=None,
 ):
     token = refresh_bar("Мощность: полная / активная / неактивная / реактивная ", "grp_power")
     c1, c2, c3, c4 = st.columns(4)
@@ -76,4 +80,6 @@ def render_power_group(
         theme_base=theme_base,
         gap_threshold=gap_threshold,
     )
+    if x_range is not None:
+        fig.update_xaxes(range=x_range)
     st.plotly_chart(fig, use_container_width=True, config={"responsive": True}, key=f"grp_power_{all_token}_{token}")
