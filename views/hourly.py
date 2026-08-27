@@ -130,9 +130,9 @@ def render_hourly_mode() -> None:
     with nav1:
         show_prev = st.button("Показать предыдущий час", disabled=not has_current(), use_container_width=True)
     with nav2:
-        load_prev = st.button("Загрузить предыдущий час", disabled=not has_current(), use_container_width=True)
+        load_prev = st.button("Добавить в график предыдущий час", disabled=not has_current(), use_container_width=True)
     with nav3:
-        load_next = st.button("Загрузить следующий час", disabled=not has_current(), use_container_width=True)
+        load_next = st.button("Добавить в график следующий час", disabled=not has_current(), use_container_width=True)
     with nav4:
         show_next = st.button("Показать следующий час", disabled=not has_current(), use_container_width=True)
 
