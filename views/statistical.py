@@ -416,6 +416,11 @@ def render_statistical_mode() -> None:
         """
         <style>
         div[data-testid='stPlotlyChart'] { margin-top: 0rem; margin-bottom: 0rem; }
+        div[data-testid='InputInstructions'] > span:first-child { font-size: 0 !important; }
+        div[data-testid='InputInstructions'] > span:first-child::after {
+            content: "Нажмите Enter.";
+            font-size: 0.75rem;
+        }
         </style>
         """,
         unsafe_allow_html=True,
