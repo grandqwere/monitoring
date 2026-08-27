@@ -191,9 +191,9 @@ def render_minutely_mode() -> None:
     with nav1:
         show_prev = st.button("Показать предыдущую минуту", disabled=not has_minute_current(), use_container_width=True)
     with nav2:
-        load_prev = st.button("Загрузить предыдущую минуту", disabled=not has_minute_current(), use_container_width=True)
+        load_prev = st.button("Добавить в график предыдущую минуту", disabled=not has_minute_current(), use_container_width=True)
     with nav3:
-        load_next = st.button("Загрузить следующую минуту", disabled=not has_minute_current(), use_container_width=True)
+        load_next = st.button("Добавить в график следующую минуту", disabled=not has_minute_current(), use_container_width=True)
     with nav4:
         show_next = st.button("Показать следующую минуту", disabled=not has_minute_current(), use_container_width=True)
 
