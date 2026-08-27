@@ -76,12 +76,15 @@ def _update_minutely_heading(heading_ph) -> None:
     )
 
 
-def _format_minutely_time_axis(fig):
+def _format_minutely_time_axis(fig, x_range=None):
     """Фиксирует миллисекунды на оси X и в подсказке при наведении."""
-    fig.update_xaxes(
-        tickformat=MINUTELY_TIME_TICK_FORMAT,
-        hoverformat=MINUTELY_TIME_HOVER_FORMAT,
-    )
+    axis_kwargs = {
+        "tickformat": MINUTELY_TIME_TICK_FORMAT,
+        "hoverformat": MINUTELY_TIME_HOVER_FORMAT,
+    }
+    if x_range is not None:
+        axis_kwargs["range"] = x_range
+    fig.update_xaxes(**axis_kwargs)
     return fig
 
 
@@ -233,6 +236,14 @@ def render_minutely_mode() -> None:
         st.stop()
     df_current = _coerce_numeric(df_current)
 
+    loaded_minute_starts = [
+        pd.Timestamp(datetime(d.year, d.month, d.day, int(h), int(m)))
+        for d, h, m in st.session_state.get("loaded_minutes", [])
+    ]
+    minutely_x_range = None
+    if loaded_minute_starts:
+        minutely_x_range = [min(loaded_minute_starts), max(loaded_minute_starts) + pd.Timedelta(minutes=1)]
+
     theme_base = st.get_option("theme.base") or "light"
 
     # Переключатель значений (без заголовка): «Действующие (приведенные) / Амплитудные»
@@ -299,7 +310,7 @@ def render_minutely_mode() -> None:
         theme_base=theme_base,
         gap_threshold=MINUTELY_GAP_THRESHOLD,
     )
-    _format_minutely_time_axis(fig_sum)
+    _format_minutely_time_axis(fig_sum, minutely_x_range)
     st.plotly_chart(
         fig_sum,
         use_container_width=True,
@@ -319,7 +330,7 @@ def render_minutely_mode() -> None:
             max_points=MAX_POINTS_MINUTE_GROUP,
             gap_threshold=MINUTELY_GAP_THRESHOLD,
         )
-        _format_minutely_time_axis(fig_i)
+        _format_minutely_time_axis(fig_i, minutely_x_range)
         st.plotly_chart(
             fig_i,
             use_container_width=True,
@@ -341,7 +352,7 @@ def render_minutely_mode() -> None:
             max_points=MAX_POINTS_MINUTE_GROUP,
             gap_threshold=MINUTELY_GAP_THRESHOLD,
         )
-        _format_minutely_time_axis(fig_u)
+        _format_minutely_time_axis(fig_u, minutely_x_range)
         st.plotly_chart(
             fig_u,
             use_container_width=True,
