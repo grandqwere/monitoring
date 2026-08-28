@@ -329,24 +329,24 @@ def _stat_helper_values(
             result[col].append(value)
 
         line_values: list[str | float] = [
-            normalized(row, "q50") if show_median else "#N/A",
-            normalized(row, "q25") if show_50 else "#N/A",
-            normalized(row, "q75") if show_50 else "#N/A",
-            normalized(row, "q05") if show_90 else "#N/A",
-            normalized(row, "q95") if show_90 else "#N/A",
-            normalized(row, "q005") if show_99 else "#N/A",
-            normalized(row, "q995") if show_99 else "#N/A",
-            normalized(row, "qmax") if show_max else "#N/A",
+            raw_value(row, source["q50"]) + shift if show_median else "#N/A",
+            raw_value(row, source["q25"]) + shift if show_50 else "#N/A",
+            raw_value(row, source["q75"]) + shift if show_50 else "#N/A",
+            raw_value(row, source["q05"]) + shift if show_90 else "#N/A",
+            raw_value(row, source["q95"]) + shift if show_90 else "#N/A",
+            raw_value(row, source["q005"]) + shift if show_99 else "#N/A",
+            raw_value(row, source["q995"]) + shift if show_99 else "#N/A",
+            raw_value(row, source["qmax"]) + shift if show_max else "#N/A",
         ]
         for col, value in zip(line_cols, line_values):
             result[col].append(value)
 
         for col, (enabled, threshold) in zip(threshold_cols, thresholds):
             if bool(enabled) and int(threshold) > 0:
-                result[col].append((float(threshold) - float(y_axis_min)) / span)
+                result[col].append(float(threshold))
             else:
                 result[col].append("#N/A")
-        result[constant_col].append(1.0)
+        result[constant_col].append(float(y_axis_max))
 
     return result
 
@@ -362,6 +362,125 @@ def _set_helper_formula_caches(root: ET.Element, values: dict[str, list[str | fl
             if cell is None:
                 raise ValueError(f"В шаблоне отсутствует служебная ячейка {ref}.")
             _set_formula_cache(cell, value)
+
+
+def _set_real_line_formulas(root: ET.Element, *, weekend: bool) -> None:
+    """Переводит формулы линий/порогов в реальные единицы мощности.
+
+    Серые stacked-area диапазоны остаются нормализованными 0..1 на отдельном
+    слое диаграммы. Линейный слой использует реальные кВт/кВА и собственную
+    реальную ось Y, поэтому подсказка Excel совпадает с видимой шкалой.
+    """
+    _, _, cells = _sheet_cells(root)
+    if weekend:
+        time_col = "Y"
+        source = {
+            "q005": ("Z", "AK"),
+            "q05": ("AB", "AM"),
+            "q25": ("AC", "AN"),
+            "q50": ("AD", "AO"),
+            "q75": ("AE", "AP"),
+            "q95": ("AF", "AQ"),
+            "q995": ("AH", "AS"),
+            "qmax": ("AI", "AT"),
+        }
+        line_cols = ["CB", "CC", "CD", "CE", "CF", "CG", "CH", "CI"]
+        threshold_cols = ["CJ", "CK", "CL", "CM", "CN"]
+        constant_col = "CO"
+    else:
+        time_col = "A"
+        source = {
+            "q005": ("B", "M"),
+            "q05": ("D", "O"),
+            "q25": ("E", "P"),
+            "q50": ("F", "Q"),
+            "q75": ("G", "R"),
+            "q95": ("H", "S"),
+            "q995": ("J", "U"),
+            "qmax": ("K", "V"),
+        }
+        line_cols = ["BE", "BF", "BG", "BH", "BI", "BJ", "BK", "BL"]
+        threshold_cols = ["BM", "BN", "BO", "BP", "BQ"]
+        constant_col = "BR"
+
+    line_specs = [
+        (line_cols[0], "$B$8", "q50"),
+        (line_cols[1], "$D$8", "q25"),
+        (line_cols[2], "$D$8", "q75"),
+        (line_cols[3], "$F$8", "q05"),
+        (line_cols[4], "$F$8", "q95"),
+        (line_cols[5], "$H$8", "q005"),
+        (line_cols[6], "$H$8", "q995"),
+        (line_cols[7], "$J$8", "qmax"),
+    ]
+    threshold_specs = [
+        (threshold_cols[0], "$C$6", "$B$6"),
+        (threshold_cols[1], "$F$6", "$E$6"),
+        (threshold_cols[2], "$I$6", "$H$6"),
+        (threshold_cols[3], "$L$6", "$K$6"),
+        (threshold_cols[4], "$M$6", "$O$6"),
+    ]
+
+    def set_formula(ref: str, text: str) -> None:
+        cell = cells.get(ref)
+        if cell is None:
+            raise ValueError(f"В шаблоне отсутствует служебная ячейка {ref}.")
+        formula = cell.find(f"{{{_NS}}}f")
+        if formula is None:
+            raise ValueError(f"Ожидалась формула в служебной ячейке {ref}.")
+        formula.text = text
+
+    for row_no in range(2, _MAX_DATA_ROWS + 2):
+        def power_expr(key: str) -> str:
+            active_col, apparent_col = source[key]
+            return (
+                f'(IF(Статистика!$C$4="Параллельный режим (активная мощность)",'
+                f'{active_col}{row_no},{apparent_col}{row_no})+Статистика!$J$4)'
+            )
+
+        for col, state_ref, key in line_specs:
+            set_formula(
+                f"{col}{row_no}",
+                f'IF({time_col}{row_no}="",NA(),IF(Статистика!{state_ref}="Вкл",{power_expr(key)},NA()))',
+            )
+
+        for col, state_ref, value_ref in threshold_specs:
+            set_formula(
+                f"{col}{row_no}",
+                f'IF(AND({time_col}{row_no}<>"",Статистика!{state_ref}="Вкл",Статистика!{value_ref}>0),'
+                f'Статистика!{value_ref},NA())',
+            )
+
+        set_formula(
+            f"{constant_col}{row_no}",
+            f'IF({time_col}{row_no}="",NA(),Статистика!$G$10)',
+        )
+
+
+def _set_chart_real_y_axis(root: ET.Element, y_axis_min: float, y_axis_max: float) -> None:
+    """Задаёт реальный масштаб Y линейному слою диаграммы Excel."""
+    if y_axis_max <= y_axis_min:
+        raise ValueError("Верхняя граница оси должна быть больше нижней.")
+    axes = root.findall(f".//{{{_C_NS}}}valAx")
+    if not axes:
+        raise ValueError("В диаграмме Excel не найдена ось значений Y.")
+
+    major_unit = (float(y_axis_max) - float(y_axis_min)) / 5.0
+    for axis in axes:
+        scaling = axis.find(f"{{{_C_NS}}}scaling")
+        if scaling is None:
+            raise ValueError("В диаграмме Excel отсутствует scaling оси Y.")
+        min_node = scaling.find(f"{{{_C_NS}}}min")
+        max_node = scaling.find(f"{{{_C_NS}}}max")
+        if min_node is None or max_node is None:
+            raise ValueError("В диаграмме Excel отсутствуют фиксированные min/max оси Y.")
+        min_node.set("val", repr(float(y_axis_min)))
+        max_node.set("val", repr(float(y_axis_max)))
+
+        major_node = axis.find(f"{{{_C_NS}}}majorUnit")
+        if major_node is None:
+            major_node = ET.SubElement(axis, f"{{{_C_NS}}}majorUnit")
+        major_node.set("val", repr(float(major_unit)))
 
 
 def _chart_formula_column(formula: str) -> str | None:
@@ -390,6 +509,7 @@ def _update_chart_caches(
     weekday_times: Sequence[str],
     weekend_times: Sequence[str],
     helper_values: dict[str, list[str | float]],
+    real_y_axis: tuple[float, float] | None = None,
 ) -> bytes:
     root = ET.fromstring(chart_xml)
     for series in root.findall(f".//{{{_C_NS}}}ser"):
@@ -414,6 +534,9 @@ def _update_chart_caches(
         column = _chart_formula_column(formula_node.text or "")
         if column and column in helper_values:
             _replace_chart_cache(cache, helper_values[column])
+
+    if real_y_axis is not None:
+        _set_chart_real_y_axis(root, real_y_axis[0], real_y_axis[1])
 
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
@@ -599,6 +722,8 @@ def build_statistical_workbook(
             weekend=True,
         )
         helper_values = {**weekday_helpers, **weekend_helpers}
+        _set_real_line_formulas(sheet2, weekend=False)
+        _set_real_line_formulas(sheet2, weekend=True)
         _set_helper_formula_caches(sheet2, helper_values)
 
         weekday_times = _time_cache(weekday_rows or [_EXPECTED_HEADERS])
@@ -615,6 +740,9 @@ def build_statistical_workbook(
                 weekday_times=weekday_times,
                 weekend_times=weekend_times,
                 helper_values=helper_values,
+                real_y_axis=(float(y_axis_min), float(y_axis_max))
+                if chart_name in {"chart2.xml", "chart4.xml"}
+                else None,
             )
 
         out = io.BytesIO()
