@@ -468,33 +468,46 @@ if st.session_state["mode"] == "statistical":
     weekday_csv = read_text_s3(build_root_key("Stat/weekday.csv"))
     weekend_csv = read_text_s3(build_root_key("Stat/weekend.csv"))
     if export_state and (weekday_csv or weekend_csv):
-        try:
-            xlsx_bytes = _build_statistical_xlsx_cached(
+        # Снимок значений делаем в основном потоке. Сам Excel собирается callable-функцией
+        # только по клику на download_button (Streamlit >= 1.57).
+        object_title = _current_title()
+        measurement_period = _measurement_period_value()
+        power_mode = str(export_state.get("power_mode") or "")
+        shift_power = int(export_state.get("shift_power") or 0)
+        thresholds = tuple(export_state.get("thresholds") or ())
+        show_median = bool(export_state.get("show_median"))
+        show_50 = bool(export_state.get("show_50"))
+        show_90 = bool(export_state.get("show_90"))
+        show_99 = bool(export_state.get("show_99"))
+        show_max = bool(export_state.get("show_max"))
+        y_axis_min = float(export_state.get("y_axis_min") or 0.0)
+        y_axis_max = float(export_state.get("y_axis_max") or 1.0)
+
+        def _make_statistical_download() -> bytes:
+            return _build_statistical_xlsx_cached(
                 weekday_csv,
                 weekend_csv,
-                _current_title(),
-                _measurement_period_value(),
-                str(export_state.get("power_mode") or ""),
-                int(export_state.get("shift_power") or 0),
-                tuple(export_state.get("thresholds") or ()),
-                bool(export_state.get("show_median")),
-                bool(export_state.get("show_50")),
-                bool(export_state.get("show_90")),
-                bool(export_state.get("show_99")),
-                bool(export_state.get("show_max")),
-                float(export_state.get("y_axis_min") or 0.0),
-                float(export_state.get("y_axis_max") or 1.0),
+                object_title,
+                measurement_period,
+                power_mode,
+                shift_power,
+                thresholds,
+                show_median,
+                show_50,
+                show_90,
+                show_99,
+                show_max,
+                y_axis_min,
+                y_axis_max,
             )
-        except Exception as exc:
-            download_ph.error(f"Не удалось подготовить Excel: {exc}")
-        else:
-            download_ph.download_button(
-                "Скачать графики",
-                data=xlsx_bytes,
-                file_name="Потребление электроэнергии.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
+
+        download_ph.download_button(
+            "Скачать графики",
+            data=_make_statistical_download,
+            file_name="Потребление электроэнергии.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
     else:
         download_ph.empty()
 else:
