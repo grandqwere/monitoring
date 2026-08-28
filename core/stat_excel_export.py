@@ -428,6 +428,11 @@ def _set_real_line_formulas(root: ET.Element, *, weekend: bool) -> None:
         formula = cell.find(f"{{{_NS}}}f")
         if formula is None:
             raise ValueError(f"Ожидалась формула в служебной ячейке {ref}.")
+        # Эти формулы записываются поштучно. Если исходная ячейка была частью
+        # shared-formula, нельзя оставлять t="shared"/si/ref и одновременно
+        # записывать собственный текст формулы: Excel считает такую структуру
+        # повреждённой и удаляет формулы при восстановлении книги.
+        formula.attrib.clear()
         formula.text = text
 
     for row_no in range(2, _MAX_DATA_ROWS + 2):
