@@ -589,6 +589,28 @@ def _force_recalculation(workbook_xml: bytes) -> bytes:
     return (text[: match.start()] + replacement + text[match.end() :]).encode("utf-8")
 
 
+def _remove_calc_chain_relationship(rels_xml: bytes) -> bytes:
+    """Удаляет ссылку workbook -> calcChain при изменении формул.
+
+    Старая цепочка вычислений шаблона становится недостоверной после замены
+    формул служебных колонок. Excel сам построит новую цепочку при открытии.
+    """
+    text = rels_xml.decode("utf-8")
+    pattern = (
+        r'<Relationship\b(?=[^>]*\bType="'
+        r'http://schemas\.openxmlformats\.org/officeDocument/2006/relationships/calcChain")'
+        r'[^>]*/>'
+    )
+    return re.sub(pattern, "", text).encode("utf-8")
+
+
+def _remove_calc_chain_content_type(content_types_xml: bytes) -> bytes:
+    """Удаляет Content Types запись calcChain после удаления самого part."""
+    text = content_types_xml.decode("utf-8")
+    pattern = r'<Override\b(?=[^>]*\bPartName="/xl/calcChain\.xml")[^>]*/>'
+    return re.sub(pattern, "", text).encode("utf-8")
+
+
 def build_statistical_workbook(
     *,
     weekday_csv: str,
@@ -732,6 +754,12 @@ def build_statistical_workbook(
             "xl/worksheets/sheet1.xml": _serialize_xml(sheet1),
             "xl/worksheets/sheet2.xml": _serialize_xml(sheet2),
             "xl/workbook.xml": _force_recalculation(src.read("xl/workbook.xml")),
+            "xl/_rels/workbook.xml.rels": _remove_calc_chain_relationship(
+                src.read("xl/_rels/workbook.xml.rels")
+            ),
+            "[Content_Types].xml": _remove_calc_chain_content_type(
+                src.read("[Content_Types].xml")
+            ),
         }
         for chart_name in ("chart1.xml", "chart2.xml", "chart3.xml", "chart4.xml"):
             path = f"xl/charts/{chart_name}"
@@ -748,6 +776,8 @@ def build_statistical_workbook(
         out = io.BytesIO()
         with zipfile.ZipFile(out, "w") as dst:
             for info in src.infolist():
+                if info.filename == "xl/calcChain.xml":
+                    continue
                 payload = replacements.get(info.filename)
                 if payload is None:
                     payload = src.read(info.filename)
