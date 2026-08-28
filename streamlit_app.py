@@ -506,6 +506,8 @@ if st.session_state["mode"] == "statistical":
             data=_make_statistical_download,
             file_name="Потребление электроэнергии.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="statistical_xlsx_download",
+            on_click="ignore",
             use_container_width=True,
         )
     else:
