@@ -15,6 +15,7 @@ from views.minutely import render_minutely_mode  # NEW
 from views.statistical import render_statistical_mode  # NEW
 from core.hour_loader import init_hour_state
 from core.minute_loader import init_minute_state  # NEW
+from core.stat_excel_export import build_statistical_workbook
 from core.data_io import read_text_s3, read_bytes_s3, s3_measurement_period_all
 from core.s3_paths import (
     build_root_key,
@@ -108,7 +109,7 @@ def _clear_all_caches():
         "__measurement_period_all",
 
         # statistical
-        "stat_cb_50", "stat_cb_90", "stat_cb_95", "stat_cb_99",
+        "stat_cb_50", "stat_cb_90", "stat_cb_95", "stat_cb_99", "__stat_export",
     ]:
         if k in st.session_state:
             del st.session_state[k]
@@ -198,8 +199,8 @@ def _is_demo_mode() -> bool:
         return False
 
 
-def _measurement_period_text() -> str:
-    """Возвращает строку периода измерений для текущего объекта."""
+def _measurement_period_value() -> str:
+    """Возвращает значение периода измерений без подписи поля."""
     if _is_demo_mode():
         return ""
 
@@ -211,7 +212,13 @@ def _measurement_period_text() -> str:
     end = format_datetime_ru(period.get("end"))
     if not start or not end:
         return ""
-    return f"Период измерений: с {start} по {end}"
+    return f"с {start} по {end}"
+
+
+def _measurement_period_text() -> str:
+    """Возвращает строку периода измерений для заголовка страницы."""
+    value = _measurement_period_value()
+    return f"Период измерений: {value}" if value else ""
 
 
 def _day_folder(d) -> str:
@@ -328,6 +335,41 @@ def _build_zip_from_keys(items: list[tuple[str, str | None]]) -> bytes:
     return buf.getvalue()
 
 
+@st.cache_data(show_spinner=False)
+def _build_statistical_xlsx_cached(
+    weekday_csv: str,
+    weekend_csv: str,
+    object_title: str,
+    measurement_period: str,
+    power_mode: str,
+    shift_power: int,
+    thresholds: tuple[tuple[bool, int], ...],
+    show_median: bool,
+    show_50: bool,
+    show_90: bool,
+    show_99: bool,
+    show_max: bool,
+    y_axis_min: float,
+    y_axis_max: float,
+) -> bytes:
+    return build_statistical_workbook(
+        weekday_csv=weekday_csv,
+        weekend_csv=weekend_csv,
+        object_title=object_title,
+        measurement_period=measurement_period,
+        power_mode=power_mode,
+        shift_power=shift_power,
+        thresholds=thresholds,
+        show_median=show_median,
+        show_50=show_50,
+        show_90=show_90,
+        show_99=show_99,
+        show_max=show_max,
+        y_axis_min=y_axis_min,
+        y_axis_max=y_axis_max,
+    )
+
+
 
 st.markdown(f"<h3 style='margin:0'>{_current_title()}</h3>", unsafe_allow_html=True)
 measurement_period = _measurement_period_text()
@@ -419,17 +461,53 @@ else:
     render_hourly_mode()
 
 
-# Кнопка «Скачать данные» (ZIP) — справа от переключателя режимов, под кнопкой «Выйти»
-items, zip_name = _download_keys_and_name()
-if items:
-    zip_bytes = _build_zip_from_keys(items)
-    if zip_bytes:
-        download_ph.download_button(
-            "Скачать данные (ZIP)",
-            data=zip_bytes,
-            file_name=zip_name or "data.zip",
-            mime="application/zip",
-            use_container_width=True,
-        )
+# Кнопка скачивания — справа от переключателя режимов, под кнопкой «Выйти».
+# Для статистики отдаём заполненный Excel-шаблон; остальные режимы по-прежнему отдают ZIP.
+if st.session_state["mode"] == "statistical":
+    export_state = st.session_state.get("__stat_export") or {}
+    weekday_csv = read_text_s3(build_root_key("Stat/weekday.csv"))
+    weekend_csv = read_text_s3(build_root_key("Stat/weekend.csv"))
+    if export_state and (weekday_csv or weekend_csv):
+        try:
+            xlsx_bytes = _build_statistical_xlsx_cached(
+                weekday_csv,
+                weekend_csv,
+                _current_title(),
+                _measurement_period_value(),
+                str(export_state.get("power_mode") or ""),
+                int(export_state.get("shift_power") or 0),
+                tuple(export_state.get("thresholds") or ()),
+                bool(export_state.get("show_median")),
+                bool(export_state.get("show_50")),
+                bool(export_state.get("show_90")),
+                bool(export_state.get("show_99")),
+                bool(export_state.get("show_max")),
+                float(export_state.get("y_axis_min") or 0.0),
+                float(export_state.get("y_axis_max") or 1.0),
+            )
+        except Exception as exc:
+            download_ph.error(f"Не удалось подготовить Excel: {exc}")
+        else:
+            download_ph.download_button(
+                "Скачать графики",
+                data=xlsx_bytes,
+                file_name="Потребление электроэнергии.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+    else:
+        download_ph.empty()
 else:
-    download_ph.empty()
+    items, zip_name = _download_keys_and_name()
+    if items:
+        zip_bytes = _build_zip_from_keys(items)
+        if zip_bytes:
+            download_ph.download_button(
+                "Скачать данные (ZIP)",
+                data=zip_bytes,
+                file_name=zip_name or "data.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
+    else:
+        download_ph.empty()
