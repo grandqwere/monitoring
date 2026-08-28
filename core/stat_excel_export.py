@@ -329,21 +329,21 @@ def _stat_helper_values(
             result[col].append(value)
 
         line_values: list[str | float] = [
-            raw_value(row, source["q50"]) + shift if show_median else "#N/A",
-            raw_value(row, source["q25"]) + shift if show_50 else "#N/A",
-            raw_value(row, source["q75"]) + shift if show_50 else "#N/A",
-            raw_value(row, source["q05"]) + shift if show_90 else "#N/A",
-            raw_value(row, source["q95"]) + shift if show_90 else "#N/A",
-            raw_value(row, source["q005"]) + shift if show_99 else "#N/A",
-            raw_value(row, source["q995"]) + shift if show_99 else "#N/A",
-            raw_value(row, source["qmax"]) + shift if show_max else "#N/A",
+            round(raw_value(row, source["q50"]) + shift, 1) if show_median else "#N/A",
+            round(raw_value(row, source["q25"]) + shift, 1) if show_50 else "#N/A",
+            round(raw_value(row, source["q75"]) + shift, 1) if show_50 else "#N/A",
+            round(raw_value(row, source["q05"]) + shift, 1) if show_90 else "#N/A",
+            round(raw_value(row, source["q95"]) + shift, 1) if show_90 else "#N/A",
+            round(raw_value(row, source["q005"]) + shift, 1) if show_99 else "#N/A",
+            round(raw_value(row, source["q995"]) + shift, 1) if show_99 else "#N/A",
+            round(raw_value(row, source["qmax"]) + shift, 1) if show_max else "#N/A",
         ]
         for col, value in zip(line_cols, line_values):
             result[col].append(value)
 
         for col, (enabled, threshold) in zip(threshold_cols, thresholds):
             if bool(enabled) and int(threshold) > 0:
-                result[col].append(float(threshold))
+                result[col].append(round(float(threshold), 1))
             else:
                 result[col].append("#N/A")
         result[constant_col].append(float(y_axis_max))
@@ -439,8 +439,8 @@ def _set_real_line_formulas(root: ET.Element, *, weekend: bool) -> None:
         def power_expr(key: str) -> str:
             active_col, apparent_col = source[key]
             return (
-                f'(IF(Статистика!$C$4="Параллельный режим (активная мощность)",'
-                f'{active_col}{row_no},{apparent_col}{row_no})+Статистика!$J$4)'
+                f'ROUND(IF(Статистика!$C$4="Параллельный режим (активная мощность)",'
+                f'{active_col}{row_no},{apparent_col}{row_no})+Статистика!$J$4,1)'
             )
 
         for col, state_ref, key in line_specs:
@@ -453,7 +453,7 @@ def _set_real_line_formulas(root: ET.Element, *, weekend: bool) -> None:
             set_formula(
                 f"{col}{row_no}",
                 f'IF(AND({time_col}{row_no}<>"",Статистика!{state_ref}="Вкл",Статистика!{value_ref}>0),'
-                f'Статистика!{value_ref},NA())',
+                f'ROUND(Статистика!{value_ref},1),NA())',
             )
 
         set_formula(
