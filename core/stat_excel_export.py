@@ -40,6 +40,10 @@ _MAX_DATA_ROWS = 288
 
 _NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+_C_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+_A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_C16_NS = "http://schemas.microsoft.com/office/drawing/2014/chart"
+_C16R2_NS = "http://schemas.microsoft.com/office/drawing/2015/06/chart"
 _IGNORABLE_NAMESPACES = {
     "x14ac": "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac",
     "xr": "http://schemas.microsoft.com/office/spreadsheetml/2014/revision",
@@ -53,6 +57,10 @@ ET.register_namespace("x14ac", "http://schemas.microsoft.com/office/spreadsheetm
 ET.register_namespace("xr", "http://schemas.microsoft.com/office/spreadsheetml/2014/revision")
 ET.register_namespace("xr2", "http://schemas.microsoft.com/office/spreadsheetml/2015/revision2")
 ET.register_namespace("xr3", "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3")
+ET.register_namespace("c", _C_NS)
+ET.register_namespace("a", _A_NS)
+ET.register_namespace("c16", _C16_NS)
+ET.register_namespace("c16r2", _C16R2_NS)
 
 
 def _template_path() -> Path:
@@ -205,7 +213,9 @@ def _set_formula_cache(cell: ET.Element, value: str | float | int) -> None:
     for child in list(cell):
         if child.tag == f"{{{_NS}}}v":
             cell.remove(child)
-    if isinstance(value, str):
+    if value == "#N/A":
+        cell.set("t", "e")
+    elif isinstance(value, str):
         cell.set("t", "str")
     else:
         cell.attrib.pop("t", None)
@@ -237,6 +247,186 @@ def _write_csv_block(root: ET.Element, start_col: int, rows_data: Sequence[Seque
             if row_no <= len(rows_data):
                 value = rows_data[row_no - 1][offset]
             _set_cell(_ensure_cell(sheet_data, rows, cells, ref), value)
+
+
+def _stat_helper_values(
+    rows_data: Sequence[Sequence[str | Decimal | None]],
+    *,
+    active_power: bool,
+    shift_power: int,
+    thresholds: Sequence[tuple[bool, int]],
+    show_median: bool,
+    show_50: bool,
+    show_90: bool,
+    show_99: bool,
+    show_max: bool,
+    y_axis_min: float,
+    y_axis_max: float,
+    weekend: bool,
+) -> dict[str, list[str | float]]:
+    """Вычисляет те же значения, что формулы служебных колонок листа «Данные»."""
+    span = max(float(y_axis_max) - float(y_axis_min), 0.000001)
+    shift = float(shift_power)
+    source = {
+        "q005": 1 if active_power else 12,
+        "q05": 3 if active_power else 14,
+        "q25": 4 if active_power else 15,
+        "q50": 5 if active_power else 16,
+        "q75": 6 if active_power else 17,
+        "q95": 7 if active_power else 18,
+        "q995": 9 if active_power else 20,
+        "qmax": 10 if active_power else 21,
+    }
+
+    area_cols = ["BT", "BU", "BV", "BW", "BX", "BY", "BZ", "CA"] if weekend else [
+        "AW", "AX", "AY", "AZ", "BA", "BB", "BC", "BD"
+    ]
+    line_cols = ["CB", "CC", "CD", "CE", "CF", "CG", "CH", "CI"] if weekend else [
+        "BE", "BF", "BG", "BH", "BI", "BJ", "BK", "BL"
+    ]
+    threshold_cols = ["CJ", "CK", "CL", "CM", "CN"] if weekend else ["BM", "BN", "BO", "BP", "BQ"]
+    constant_col = "CO" if weekend else "BR"
+    result: dict[str, list[str | float]] = {col: [] for col in area_cols + line_cols + threshold_cols + [constant_col]}
+
+    def raw_value(row: Sequence[str | Decimal | None], idx: int) -> float:
+        if idx >= len(row) or row[idx] is None or row[idx] == "":
+            # В арифметике Excel пустая числовая ячейка трактуется как 0.
+            return 0.0
+        return float(row[idx])
+
+    def normalized(row: Sequence[str | Decimal | None], key: str) -> float:
+        return (raw_value(row, source[key]) + shift - float(y_axis_min)) / span
+
+    data_rows = list(rows_data[1:]) if rows_data else []
+    for row_idx in range(_MAX_DATA_ROWS):
+        row = data_rows[row_idx] if row_idx < len(data_rows) else []
+        time_value = str(row[0]).strip() if row and row[0] is not None else ""
+        if not time_value:
+            for col in area_cols:
+                result[col].append("")
+            for col in line_cols + threshold_cols + [constant_col]:
+                result[col].append("#N/A")
+            continue
+
+        q005 = max(0.0, min(1.0, normalized(row, "q005")))
+        q05 = max(0.0, min(1.0, normalized(row, "q05")))
+        q25 = max(0.0, min(1.0, normalized(row, "q25")))
+        q50 = max(0.0, min(1.0, normalized(row, "q50")))
+        q75 = max(0.0, min(1.0, normalized(row, "q75")))
+        q95 = max(0.0, min(1.0, normalized(row, "q95")))
+        q995 = max(0.0, min(1.0, normalized(row, "q995")))
+        areas = [
+            q005,
+            max(0.0, q05 - q005),
+            max(0.0, q25 - q05),
+            max(0.0, q50 - q25),
+            max(0.0, q75 - q50),
+            max(0.0, q95 - q75),
+            max(0.0, q995 - q95),
+            max(0.0, 1.0 - q995),
+        ]
+        for col, value in zip(area_cols, areas):
+            result[col].append(value)
+
+        line_values: list[str | float] = [
+            normalized(row, "q50") if show_median else "#N/A",
+            normalized(row, "q25") if show_50 else "#N/A",
+            normalized(row, "q75") if show_50 else "#N/A",
+            normalized(row, "q05") if show_90 else "#N/A",
+            normalized(row, "q95") if show_90 else "#N/A",
+            normalized(row, "q005") if show_99 else "#N/A",
+            normalized(row, "q995") if show_99 else "#N/A",
+            normalized(row, "qmax") if show_max else "#N/A",
+        ]
+        for col, value in zip(line_cols, line_values):
+            result[col].append(value)
+
+        for col, (enabled, threshold) in zip(threshold_cols, thresholds):
+            if bool(enabled) and int(threshold) > 0:
+                result[col].append((float(threshold) - float(y_axis_min)) / span)
+            else:
+                result[col].append("#N/A")
+        result[constant_col].append(1.0)
+
+    return result
+
+
+def _set_helper_formula_caches(root: ET.Element, values: dict[str, list[str | float]]) -> None:
+    _, _, cells = _sheet_cells(root)
+    for col, column_values in values.items():
+        if len(column_values) != _MAX_DATA_ROWS:
+            raise ValueError(f"Неверный размер кэша служебной колонки {col}.")
+        for offset, value in enumerate(column_values, start=2):
+            ref = f"{col}{offset}"
+            cell = cells.get(ref)
+            if cell is None:
+                raise ValueError(f"В шаблоне отсутствует служебная ячейка {ref}.")
+            _set_formula_cache(cell, value)
+
+
+def _chart_formula_column(formula: str) -> str | None:
+    match = re.fullmatch(r"(?:'Данные'|Данные)!\$([A-Z]+)\$2:\$\1\$289", (formula or "").strip())
+    return match.group(1) if match else None
+
+
+def _replace_chart_cache(cache: ET.Element, values: Sequence[str | float]) -> None:
+    for child in list(cache):
+        local_name = child.tag.rsplit("}", 1)[-1]
+        if local_name in {"ptCount", "pt"}:
+            cache.remove(child)
+    ET.SubElement(cache, f"{{{_C_NS}}}ptCount", {"val": str(len(values))})
+    for idx, value in enumerate(values):
+        point = ET.SubElement(cache, f"{{{_C_NS}}}pt", {"idx": str(idx)})
+        node = ET.SubElement(point, f"{{{_C_NS}}}v")
+        if isinstance(value, str):
+            node.text = value
+        else:
+            node.text = repr(float(value))
+
+
+def _update_chart_caches(
+    chart_xml: bytes,
+    *,
+    weekday_times: Sequence[str],
+    weekend_times: Sequence[str],
+    helper_values: dict[str, list[str | float]],
+) -> bytes:
+    root = ET.fromstring(chart_xml)
+    for series in root.findall(f".//{{{_C_NS}}}ser"):
+        str_ref = series.find(f"{{{_C_NS}}}cat/{{{_C_NS}}}strRef")
+        if str_ref is not None:
+            formula_node = str_ref.find(f"{{{_C_NS}}}f")
+            cache = str_ref.find(f"{{{_C_NS}}}strCache")
+            if formula_node is not None and cache is not None:
+                column = _chart_formula_column(formula_node.text or "")
+                if column == "A":
+                    _replace_chart_cache(cache, weekday_times)
+                elif column == "Y":
+                    _replace_chart_cache(cache, weekend_times)
+
+        num_ref = series.find(f"{{{_C_NS}}}val/{{{_C_NS}}}numRef")
+        if num_ref is None:
+            continue
+        formula_node = num_ref.find(f"{{{_C_NS}}}f")
+        cache = num_ref.find(f"{{{_C_NS}}}numCache")
+        if formula_node is None or cache is None:
+            continue
+        column = _chart_formula_column(formula_node.text or "")
+        if column and column in helper_values:
+            _replace_chart_cache(cache, helper_values[column])
+
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def _time_cache(rows_data: Sequence[Sequence[str | Decimal | None]]) -> list[str]:
+    rows = list(rows_data[1:]) if rows_data else []
+    result: list[str] = []
+    for idx in range(_MAX_DATA_ROWS):
+        if idx < len(rows) and rows[idx] and rows[idx][0] is not None:
+            result.append(str(rows[idx][0]))
+        else:
+            result.append("")
+    return result
 
 
 def _namespace_is_used(root: ET.Element, uri: str) -> bool:
@@ -380,11 +570,52 @@ def build_statistical_workbook(
         else:
             _write_csv_block(sheet2, 25, [_EXPECTED_HEADERS])
 
+        weekday_helpers = _stat_helper_values(
+            weekday_rows or [_EXPECTED_HEADERS],
+            active_power=is_active,
+            shift_power=shift_power,
+            thresholds=thresholds,
+            show_median=show_median,
+            show_50=show_50,
+            show_90=show_90,
+            show_99=show_99,
+            show_max=show_max,
+            y_axis_min=y_axis_min,
+            y_axis_max=y_axis_max,
+            weekend=False,
+        )
+        weekend_helpers = _stat_helper_values(
+            weekend_rows or [_EXPECTED_HEADERS],
+            active_power=is_active,
+            shift_power=shift_power,
+            thresholds=thresholds,
+            show_median=show_median,
+            show_50=show_50,
+            show_90=show_90,
+            show_99=show_99,
+            show_max=show_max,
+            y_axis_min=y_axis_min,
+            y_axis_max=y_axis_max,
+            weekend=True,
+        )
+        helper_values = {**weekday_helpers, **weekend_helpers}
+        _set_helper_formula_caches(sheet2, helper_values)
+
+        weekday_times = _time_cache(weekday_rows or [_EXPECTED_HEADERS])
+        weekend_times = _time_cache(weekend_rows or [_EXPECTED_HEADERS])
         replacements = {
             "xl/worksheets/sheet1.xml": _serialize_xml(sheet1),
             "xl/worksheets/sheet2.xml": _serialize_xml(sheet2),
             "xl/workbook.xml": _force_recalculation(src.read("xl/workbook.xml")),
         }
+        for chart_name in ("chart1.xml", "chart2.xml", "chart3.xml", "chart4.xml"):
+            path = f"xl/charts/{chart_name}"
+            replacements[path] = _update_chart_caches(
+                src.read(path),
+                weekday_times=weekday_times,
+                weekend_times=weekend_times,
+                helper_values=helper_values,
+            )
 
         out = io.BytesIO()
         with zipfile.ZipFile(out, "w") as dst:
