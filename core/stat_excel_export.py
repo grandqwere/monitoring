@@ -474,7 +474,8 @@ def _stat_helper_values(
     weekend: bool,
 ) -> dict[str, list[str | float]]:
     """Вычисляет те же значения, что формулы служебных колонок листа «Данные»."""
-    span = max(float(y_axis_max) - float(y_axis_min), 0.000001)
+    axis_min = float(y_axis_min)
+    axis_max = float(y_axis_max)
     shift = float(shift_power)
     source = {
         "q005": 1 if active_power else 12,
@@ -503,8 +504,9 @@ def _stat_helper_values(
             return 0.0
         return float(row[idx])
 
-    def normalized(row: Sequence[str | Decimal | None], key: str) -> float:
-        return (raw_value(row, source[key]) + shift - float(y_axis_min)) / span
+    def clipped(row: Sequence[str | Decimal | None], key: str) -> float:
+        value = raw_value(row, source[key]) + shift
+        return max(axis_min, min(axis_max, value))
 
     data_rows = list(rows_data[1:]) if rows_data else []
     for row_idx in range(_MAX_DATA_ROWS):
@@ -517,13 +519,13 @@ def _stat_helper_values(
                 result[col].append("#N/A")
             continue
 
-        q005 = max(0.0, min(1.0, normalized(row, "q005")))
-        q05 = max(0.0, min(1.0, normalized(row, "q05")))
-        q25 = max(0.0, min(1.0, normalized(row, "q25")))
-        q50 = max(0.0, min(1.0, normalized(row, "q50")))
-        q75 = max(0.0, min(1.0, normalized(row, "q75")))
-        q95 = max(0.0, min(1.0, normalized(row, "q95")))
-        q995 = max(0.0, min(1.0, normalized(row, "q995")))
+        q005 = clipped(row, "q005")
+        q05 = clipped(row, "q05")
+        q25 = clipped(row, "q25")
+        q50 = clipped(row, "q50")
+        q75 = clipped(row, "q75")
+        q95 = clipped(row, "q95")
+        q995 = clipped(row, "q995")
         areas = [
             q005,
             max(0.0, q05 - q005),
@@ -532,7 +534,7 @@ def _stat_helper_values(
             max(0.0, q75 - q50),
             max(0.0, q95 - q75),
             max(0.0, q995 - q95),
-            max(0.0, 1.0 - q995),
+            max(0.0, axis_max - q995),
         ]
         for col, value in zip(area_cols, areas):
             result[col].append(value)
@@ -600,6 +602,74 @@ def _editable_stat_cells(fifth_value_ref: str, fifth_state_ref: str) -> set[str]
     return set(_EDITABLE_STAT_CELLS_BASE) | {fifth_value_ref, fifth_state_ref}
 
 
+def _set_real_area_formulas(root: ET.Element, *, weekend: bool) -> None:
+    """Переводит серые stacked-area диапазоны в реальные единицы мощности."""
+    _, _, cells = _sheet_cells(root)
+    if weekend:
+        time_col = "Y"
+        source = {
+            "q005": ("Z", "AK"),
+            "q05": ("AB", "AM"),
+            "q25": ("AC", "AN"),
+            "q50": ("AD", "AO"),
+            "q75": ("AE", "AP"),
+            "q95": ("AF", "AQ"),
+            "q995": ("AH", "AS"),
+        }
+        area_cols = ["BT", "BU", "BV", "BW", "BX", "BY", "BZ", "CA"]
+    else:
+        time_col = "A"
+        source = {
+            "q005": ("B", "M"),
+            "q05": ("D", "O"),
+            "q25": ("E", "P"),
+            "q50": ("F", "Q"),
+            "q75": ("G", "R"),
+            "q95": ("H", "S"),
+            "q995": ("J", "U"),
+        }
+        area_cols = ["AW", "AX", "AY", "AZ", "BA", "BB", "BC", "BD"]
+
+    def set_formula(ref: str, text: str) -> None:
+        cell = cells.get(ref)
+        if cell is None:
+            raise ValueError(f"В шаблоне отсутствует служебная ячейка {ref}.")
+        formula = cell.find(f"{{{_NS}}}f")
+        if formula is None:
+            raise ValueError(f"Ожидалась формула в служебной ячейке {ref}.")
+        formula.attrib.clear()
+        formula.text = text
+
+    for row_no in range(2, _MAX_DATA_ROWS + 2):
+        def power_expr(key: str) -> str:
+            active_col, apparent_col = source[key]
+            return (
+                f'(IF(Статистика!$C$4="Параллельный режим (активная мощность)",'
+                f'{active_col}{row_no},{apparent_col}{row_no})+Статистика!$J$4)'
+            )
+
+        def clipped_expr(key: str) -> str:
+            return (
+                f'MAX(Статистика!$C$10,MIN(Статистика!$G$10,{power_expr(key)}))'
+            )
+
+        boundaries = ["q005", "q05", "q25", "q50", "q75", "q95", "q995"]
+        set_formula(
+            f"{area_cols[0]}{row_no}",
+            f'IF({time_col}{row_no}="","",{clipped_expr(boundaries[0])})',
+        )
+        for idx in range(1, len(boundaries)):
+            set_formula(
+                f"{area_cols[idx]}{row_no}",
+                f'IF({time_col}{row_no}="","",MAX(0,{clipped_expr(boundaries[idx])}-'
+                f'{clipped_expr(boundaries[idx - 1])}))',
+            )
+        set_formula(
+            f"{area_cols[-1]}{row_no}",
+            f'IF({time_col}{row_no}="","",MAX(0,Статистика!$G$10-{clipped_expr("q995")}))',
+        )
+
+
 def _set_real_line_formulas(
     root: ET.Element,
     *,
@@ -607,12 +677,7 @@ def _set_real_line_formulas(
     fifth_value_ref: str,
     fifth_state_ref: str,
 ) -> None:
-    """Переводит формулы линий/порогов в реальные единицы мощности.
-
-    Серые stacked-area диапазоны остаются нормализованными 0..1 на отдельном
-    слое диаграммы. Линейный слой использует реальные кВт/кВА и собственную
-    реальную ось Y, поэтому подсказка Excel совпадает с видимой шкалой.
-    """
+    """Переводит формулы линий/порогов в реальные единицы мощности."""
     _, _, cells = _sheet_cells(root)
     if weekend:
         time_col = "Y"
@@ -705,7 +770,7 @@ def _set_real_line_formulas(
 
 
 def _set_chart_real_y_axis(root: ET.Element, y_axis_min: float, y_axis_max: float) -> None:
-    """Задаёт реальный масштаб Y линейному слою диаграммы Excel."""
+    """Задаёт одинаковый реальный масштаб Y всем слоям диаграммы Excel."""
     if y_axis_max <= y_axis_min:
         raise ValueError("Верхняя граница оси должна быть больше нижней.")
     axes = root.findall(f".//{{{_C_NS}}}valAx")
@@ -994,6 +1059,8 @@ def build_statistical_workbook(
             weekend=True,
         )
         helper_values = {**weekday_helpers, **weekend_helpers}
+        _set_real_area_formulas(sheet2, weekend=False)
+        _set_real_area_formulas(sheet2, weekend=True)
         _set_real_line_formulas(
             sheet2,
             weekend=False,
@@ -1050,9 +1117,7 @@ def build_statistical_workbook(
                 weekday_times=weekday_times,
                 weekend_times=weekend_times,
                 helper_values=helper_values,
-                real_y_axis=(float(y_axis_min), float(y_axis_max))
-                if chart_name in {"chart2.xml", "chart4.xml"}
-                else None,
+                real_y_axis=(float(y_axis_min), float(y_axis_max)),
             )
 
         out = io.BytesIO()
