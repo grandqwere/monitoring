@@ -50,6 +50,7 @@ _IGNORABLE_NAMESPACES = {
     "xr": "http://schemas.microsoft.com/office/spreadsheetml/2014/revision",
     "xr2": "http://schemas.microsoft.com/office/spreadsheetml/2015/revision2",
     "xr3": "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3",
+    "x16r2": "http://schemas.microsoft.com/office/spreadsheetml/2015/02/main",
 }
 ET.register_namespace("", _NS)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
@@ -58,6 +59,7 @@ ET.register_namespace("x14ac", "http://schemas.microsoft.com/office/spreadsheetm
 ET.register_namespace("xr", "http://schemas.microsoft.com/office/spreadsheetml/2014/revision")
 ET.register_namespace("xr2", "http://schemas.microsoft.com/office/spreadsheetml/2015/revision2")
 ET.register_namespace("xr3", "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3")
+ET.register_namespace("x16r2", "http://schemas.microsoft.com/office/spreadsheetml/2015/02/main")
 ET.register_namespace("c", _C_NS)
 ET.register_namespace("a", _A_NS)
 ET.register_namespace("c16", _C16_NS)
@@ -65,13 +67,13 @@ ET.register_namespace("c16r2", _C16R2_NS)
 
 
 _PROTECTION_PASSWORD = "Monitoring1399"
-_EDITABLE_STAT_CELLS = {
+_EDITABLE_STAT_CELLS_BASE = {
     # Режим мощности. C4:F4 — одна объединённая видимая ячейка.
     "C4", "D4", "E4", "F4",
     # Увеличение мощности.
     "J4",
-    # Значения порогов и их Вкл/Выкл.
-    "B6", "C6", "E6", "F6", "H6", "I6", "K6", "L6", "M6", "O6",
+    # Первые четыре порога: значение + Вкл/Выкл.
+    "B6", "C6", "E6", "F6", "H6", "I6", "K6", "L6",
     # Медиана / 50 / 90 / 99 / Максимум.
     "B8", "D8", "F8", "H8", "J8",
     # Ручные границы оси Excel.
@@ -139,10 +141,12 @@ def _apply_cell_protection_styles(
     styles_root: ET.Element,
     sheet1: ET.Element,
     sheet2: ET.Element,
+    *,
+    editable_stat_cells: set[str],
 ) -> None:
     """Разблокирует только элементы формы и скрывает формулы остальных ячеек."""
     style_cache: dict[tuple[int, bool, bool], int] = {}
-    for sheet_root, editable in ((sheet1, _EDITABLE_STAT_CELLS), (sheet2, set())):
+    for sheet_root, editable in ((sheet1, editable_stat_cells), (sheet2, set())):
         _, _, cells = _sheet_cells(sheet_root)
         for ref, cell in cells.items():
             formula = cell.find(f"{{{_NS}}}f")
@@ -216,10 +220,13 @@ def _protect_workbook_structure(workbook_xml: bytes, password_hash: str) -> byte
     protection = (
         f'<workbookProtection workbookPassword="{password_hash}" lockStructure="1"/>'
     )
-    marker = "<bookViews>"
-    if marker not in text:
-        raise ValueError("В workbook.xml отсутствует bookViews.")
-    text = text.replace(marker, protection + marker, 1)
+    # По CT_Workbook workbookProtection идёт сразу после workbookPr.
+    # Не вставляем его после extension/revision узлов: Excel строже обычного
+    # XML-парсера относится к порядку дочерних элементов workbook.xml.
+    match = re.search(r'<workbookPr\b[^>]*/>', text)
+    if not match:
+        raise ValueError("В workbook.xml отсутствует workbookPr.")
+    text = text[: match.end()] + protection + text[match.end() :]
     return text.encode("utf-8")
 
 
@@ -524,7 +531,40 @@ def _set_helper_formula_caches(root: ET.Element, values: dict[str, list[str | fl
             _set_formula_cache(cell, value)
 
 
-def _set_real_line_formulas(root: ET.Element, *, weekend: bool) -> None:
+def _fifth_threshold_refs(sheet1: ET.Element) -> tuple[str, str]:
+    """Возвращает (value_ref, state_ref) для пятого порога.
+
+    Поддерживаются оба варианта шаблона:
+    старый M=Вкл/Выкл, N=Порог, O=значение и новый, выровненный с JKL:
+    M=Порог, N=значение, O=Вкл/Выкл.
+    """
+    _, _, cells = _sheet_cells(sheet1)
+    n6 = cells.get("N6")
+    o6 = cells.get("O6")
+    if n6 is None or o6 is None:
+        raise ValueError("В шаблоне отсутствуют ячейки N6/O6 пятого порога.")
+
+    # Числовая ячейка в шаблоне не имеет строкового типа t=... .
+    n_is_numeric = n6.attrib.get("t") not in {"s", "inlineStr", "str"}
+    o_is_numeric = o6.attrib.get("t") not in {"s", "inlineStr", "str"}
+    if n_is_numeric and not o_is_numeric:
+        return "N6", "O6"
+    if o_is_numeric and not n_is_numeric:
+        return "O6", "M6"
+    raise ValueError("Не удалось определить расположение пятого порога в M6:O6.")
+
+
+def _editable_stat_cells(fifth_value_ref: str, fifth_state_ref: str) -> set[str]:
+    return set(_EDITABLE_STAT_CELLS_BASE) | {fifth_value_ref, fifth_state_ref}
+
+
+def _set_real_line_formulas(
+    root: ET.Element,
+    *,
+    weekend: bool,
+    fifth_value_ref: str,
+    fifth_state_ref: str,
+) -> None:
     """Переводит формулы линий/порогов в реальные единицы мощности.
 
     Серые stacked-area диапазоны остаются нормализованными 0..1 на отдельном
@@ -578,7 +618,7 @@ def _set_real_line_formulas(root: ET.Element, *, weekend: bool) -> None:
         (threshold_cols[1], "$F$6", "$E$6"),
         (threshold_cols[2], "$I$6", "$H$6"),
         (threshold_cols[3], "$L$6", "$K$6"),
-        (threshold_cols[4], "$M$6", "$O$6"),
+        (threshold_cols[4], f"${fifth_state_ref[0]}$6", f"${fifth_value_ref[0]}$6"),
     ]
 
     def set_formula(ref: str, text: str) -> None:
@@ -815,6 +855,8 @@ def build_statistical_workbook(
 
         threshold_values = [int(item[1]) for item in thresholds]
         threshold_states = ["Вкл" if bool(item[0]) else "Выкл" for item in thresholds]
+        fifth_value_ref, fifth_state_ref = _fifth_threshold_refs(sheet1)
+        editable_stat_cells = _editable_stat_cells(fifth_value_ref, fifth_state_ref)
 
         _set_values(
             sheet1,
@@ -831,8 +873,8 @@ def build_statistical_workbook(
                 "I6": threshold_states[2],
                 "K6": threshold_values[3],
                 "L6": threshold_states[3],
-                "O6": threshold_values[4],
-                "M6": threshold_states[4],
+                fifth_value_ref: threshold_values[4],
+                fifth_state_ref: threshold_states[4],
                 "B8": "Вкл" if show_median else "Выкл",
                 "D8": "Вкл" if show_50 else "Выкл",
                 "F8": "Вкл" if show_90 else "Выкл",
@@ -910,12 +952,27 @@ def build_statistical_workbook(
             weekend=True,
         )
         helper_values = {**weekday_helpers, **weekend_helpers}
-        _set_real_line_formulas(sheet2, weekend=False)
-        _set_real_line_formulas(sheet2, weekend=True)
+        _set_real_line_formulas(
+            sheet2,
+            weekend=False,
+            fifth_value_ref=fifth_value_ref,
+            fifth_state_ref=fifth_state_ref,
+        )
+        _set_real_line_formulas(
+            sheet2,
+            weekend=True,
+            fifth_value_ref=fifth_value_ref,
+            fifth_state_ref=fifth_state_ref,
+        )
         _set_helper_formula_caches(sheet2, helper_values)
 
         password_hash = _legacy_excel_password_hash(_PROTECTION_PASSWORD)
-        _apply_cell_protection_styles(styles, sheet1, sheet2)
+        _apply_cell_protection_styles(
+            styles,
+            sheet1,
+            sheet2,
+            editable_stat_cells=editable_stat_cells,
+        )
         _set_sheet_protection(
             sheet1,
             password_hash=password_hash,
