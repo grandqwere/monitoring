@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import csv
 import io
 import re
@@ -94,76 +93,119 @@ def _legacy_excel_password_hash(password: str) -> str:
     return f"{value_hash:X}"
 
 
-def _protected_style_id(
-    styles_root: ET.Element,
-    style_id: int,
-    *,
-    locked: bool,
-    hidden: bool,
-    cache: dict[tuple[int, bool, bool], int],
-) -> int:
-    """Клонирует исходный cellXf, меняя только защиту ячейки."""
-    key = (style_id, locked, hidden)
-    cached = cache.get(key)
-    if cached is not None:
-        return cached
+def _append_protection_styles_raw(
+    styles_xml: bytes,
+    requests: set[tuple[int, bool, bool]],
+) -> tuple[bytes, dict[tuple[int, bool, bool], int]]:
+    """Добавляет защитные cellXf без пересериализации styles.xml.
 
-    cell_xfs = styles_root.find(f"{{{_NS}}}cellXfs")
-    if cell_xfs is None:
-        raise ValueError("В шаблоне Excel отсутствует cellXfs.")
-    source_xfs = list(cell_xfs)
-    if not 0 <= style_id < len(source_xfs):
-        raise ValueError(f"Некорректный индекс стиля Excel: {style_id}.")
-
-    clone = copy.deepcopy(source_xfs[style_id])
-    for child in list(clone):
-        if child.tag == f"{{{_NS}}}protection":
-            clone.remove(child)
-    protection = ET.Element(
-        f"{{{_NS}}}protection",
-        {"locked": "1" if locked else "0", "hidden": "1" if hidden else "0"},
+    Excel хранит в styles.xml расширения и namespace-декларации, к которым он
+    чувствителен строже обычного XML-парсера. Поэтому исходный XML сохраняется
+    полностью, а меняются только count у cellXfs и добавляются клоны нужных xf.
+    """
+    text = styles_xml.decode("utf-8")
+    match = re.search(
+        r'(<cellXfs\b[^>]*\bcount="(\d+)"[^>]*>)(.*?)(</cellXfs>)',
+        text,
+        flags=re.DOTALL,
     )
-    # В CT_Xf protection идёт после alignment и до extLst.
-    ext_list = clone.find(f"{{{_NS}}}extLst")
-    if ext_list is None:
-        clone.append(protection)
-    else:
-        clone.insert(list(clone).index(ext_list), protection)
-    clone.set("applyProtection", "1")
-    cell_xfs.append(clone)
-    cell_xfs.set("count", str(len(cell_xfs)))
-    new_id = len(cell_xfs) - 1
-    cache[key] = new_id
-    return new_id
+    if not match:
+        raise ValueError("В шаблоне Excel отсутствует cellXfs.")
+
+    opening, count_text, body, closing = match.groups()
+    original_count = int(count_text)
+    xf_fragments = re.findall(r'<xf\b(?:[^>]*/>|[^>]*>.*?</xf>)', body, flags=re.DOTALL)
+    if len(xf_fragments) != original_count:
+        raise ValueError(
+            f"Некорректный cellXfs шаблона: count={original_count}, xf={len(xf_fragments)}."
+        )
+
+    def clone_xf(fragment: str, *, locked: bool, hidden: bool) -> str:
+        start_match = re.match(r'<xf\b[^>]*?/?>', fragment, flags=re.DOTALL)
+        if not start_match:
+            raise ValueError("Не удалось разобрать cellXf шаблона.")
+        start_tag = start_match.group(0)
+        is_self_closing = start_tag.rstrip().endswith('/>')
+
+        # applyProtection относится к самому xf.
+        start_tag = re.sub(r'\s+applyProtection="[^"]*"', '', start_tag)
+        if is_self_closing:
+            start_tag = re.sub(r'/\s*>$', '', start_tag).rstrip() + ' applyProtection="1">'
+            inner = ''
+        else:
+            start_tag = re.sub(r'>$', ' applyProtection="1">', start_tag)
+            inner = fragment[start_match.end():]
+            if not inner.endswith('</xf>'):
+                raise ValueError("Некорректный закрывающий тег cellXf шаблона.")
+            inner = inner[:-5]
+
+        # Если защита уже была, заменяем только её.
+        inner = re.sub(
+            r'<protection\b[^>]*(?:/>|>.*?</protection>)',
+            '',
+            inner,
+            flags=re.DOTALL,
+        )
+        protection = (
+            f'<protection locked="{1 if locked else 0}" '
+            f'hidden="{1 if hidden else 0}"/>'
+        )
+        ext_pos = inner.find('<extLst')
+        if ext_pos >= 0:
+            inner = inner[:ext_pos] + protection + inner[ext_pos:]
+        else:
+            inner += protection
+        return start_tag + inner + '</xf>'
+
+    mapping: dict[tuple[int, bool, bool], int] = {}
+    appended: list[str] = []
+    for key in sorted(requests, key=lambda item: (item[0], item[1], item[2])):
+        style_id, locked, hidden = key
+        if not 0 <= style_id < original_count:
+            raise ValueError(f"Некорректный индекс стиля Excel: {style_id}.")
+        mapping[key] = original_count + len(appended)
+        appended.append(clone_xf(xf_fragments[style_id], locked=locked, hidden=hidden))
+
+    new_count = original_count + len(appended)
+    new_opening = re.sub(
+        r'\bcount="\d+"',
+        f'count="{new_count}"',
+        opening,
+        count=1,
+    )
+    new_section = new_opening + body + ''.join(appended) + closing
+    updated = text[:match.start()] + new_section + text[match.end():]
+    return updated.encode("utf-8"), mapping
 
 
 def _apply_cell_protection_styles(
-    styles_root: ET.Element,
+    styles_xml: bytes,
     sheet1: ET.Element,
     sheet2: ET.Element,
     *,
     editable_stat_cells: set[str],
-) -> None:
+) -> bytes:
     """Разблокирует только элементы формы и скрывает формулы остальных ячеек."""
-    style_cache: dict[tuple[int, bool, bool], int] = {}
+    targets: list[tuple[ET.Element, tuple[int, bool, bool]]] = []
+    requests: set[tuple[int, bool, bool]] = set()
+
     for sheet_root, editable in ((sheet1, editable_stat_cells), (sheet2, set())):
         _, _, cells = _sheet_cells(sheet_root)
         for ref, cell in cells.items():
             formula = cell.find(f"{{{_NS}}}f")
             is_editable = ref in editable
             if not is_editable and formula is None:
-                # Стандартное состояние Excel — locked=1; отдельный стиль не нужен.
+                # Без явной protection ячейка Excel по умолчанию locked=1.
                 continue
             style_id = int(cell.attrib.get("s", "0"))
-            new_style_id = _protected_style_id(
-                styles_root,
-                style_id,
-                locked=not is_editable,
-                hidden=(formula is not None and not is_editable),
-                cache=style_cache,
-            )
-            cell.set("s", str(new_style_id))
+            key = (style_id, not is_editable, formula is not None and not is_editable)
+            requests.add(key)
+            targets.append((cell, key))
 
+    protected_styles_xml, mapping = _append_protection_styles_raw(styles_xml, requests)
+    for cell, key in targets:
+        cell.set("s", str(mapping[key]))
+    return protected_styles_xml
 
 def _set_sheet_protection(
     root: ET.Element,
@@ -851,7 +893,7 @@ def build_statistical_workbook(
     with zipfile.ZipFile(template_path, "r") as src:
         sheet1 = ET.fromstring(src.read("xl/worksheets/sheet1.xml"))
         sheet2 = ET.fromstring(src.read("xl/worksheets/sheet2.xml"))
-        styles = ET.fromstring(src.read("xl/styles.xml"))
+        styles_xml = src.read("xl/styles.xml")
 
         threshold_values = [int(item[1]) for item in thresholds]
         threshold_states = ["Вкл" if bool(item[0]) else "Выкл" for item in thresholds]
@@ -967,8 +1009,8 @@ def build_statistical_workbook(
         _set_helper_formula_caches(sheet2, helper_values)
 
         password_hash = _legacy_excel_password_hash(_PROTECTION_PASSWORD)
-        _apply_cell_protection_styles(
-            styles,
+        protected_styles_xml = _apply_cell_protection_styles(
+            styles_xml,
             sheet1,
             sheet2,
             editable_stat_cells=editable_stat_cells,
@@ -989,7 +1031,7 @@ def build_statistical_workbook(
         replacements = {
             "xl/worksheets/sheet1.xml": _serialize_xml(sheet1),
             "xl/worksheets/sheet2.xml": _serialize_xml(sheet2),
-            "xl/styles.xml": _serialize_xml(styles),
+            "xl/styles.xml": protected_styles_xml,
             "xl/workbook.xml": _protect_workbook_structure(
                 _force_recalculation(src.read("xl/workbook.xml")),
                 password_hash,
