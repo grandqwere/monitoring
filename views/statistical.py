@@ -478,6 +478,7 @@ def render_statistical_mode() -> None:
     # 5 чекбоксов + числовые поля для горизонтальных линий "Мощность" в единицах выбранного режима.
     thresholds: List[Tuple[int, int]] = []
     threshold_values: List[int] = []
+    threshold_controls: List[Tuple[bool, int]] = []
     for i, (emoji, _color) in enumerate(_THRESHOLDS, start=1):
         col_cb, col_inp, _sp = st.columns([1.6, 1.1, 5.3])
         with col_cb:
@@ -495,6 +496,7 @@ def render_statistical_mode() -> None:
             vv = int(v)
         except Exception:
             vv = 0
+        threshold_controls.append((bool(en), vv))
         if en and vv > 0:
             thresholds.append((i, vv))
             threshold_values.append(vv)
@@ -623,4 +625,20 @@ def render_statistical_mode() -> None:
         shown += 1
 
     if shown == 0:
+        st.session_state.pop("__stat_export", None)
         st.info("Нет данных для статистики (не найдены файлы в папке Stat текущего проекта).")
+        return
+
+    # Снимок текущих настроек экрана для Excel-экспорта.
+    st.session_state["__stat_export"] = {
+        "power_mode": power_mode,
+        "shift_power": shift_power_int,
+        "thresholds": tuple(threshold_controls),
+        "show_median": show_median,
+        "show_50": bool(cb_50),
+        "show_90": bool(cb_90),
+        "show_99": bool(cb_99),
+        "show_max": show_max,
+        "y_axis_min": 0.0,
+        "y_axis_max": float(y_max * 1.05),
+    }
