@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -165,6 +166,14 @@ def _iter_intervals_for_fill(intervals: List[Tuple[str, str, str]]) -> List[Tupl
             low, high = label_to_bounds[lbl]
             out.append((lbl, low, high))
     return out
+
+
+def _round_axis_max(value: float) -> float:
+    """Округляет верхнюю границу вверх до одной значащей цифры: 546→600, 9260→10000."""
+    if not np.isfinite(value) or value <= 0:
+        return 1.0
+    magnitude = 10.0 ** math.floor(math.log10(value))
+    return float(math.ceil(value / magnitude) * magnitude)
 
 
 def _compute_y_max(df: pd.DataFrame, cols: List[str]) -> float:
@@ -384,7 +393,7 @@ def _make_figure(
         plot_bgcolor=params["bg"],
         paper_bgcolor=params["bg"],
         yaxis=dict(
-            range=[0, y_max * 1.05],
+            range=[0, y_max],
             showgrid=True,
             gridcolor=params["grid"],
             tickformat=".0f",
@@ -571,7 +580,7 @@ def render_statistical_mode() -> None:
                     df[c] = df[c] + float(shift_power_int)
 
     shown = 0
-    y_max = _compute_global_y_max(
+    y_max_raw = _compute_global_y_max(
         [df_weekday, df_weekend],
         intervals=intervals,
         median_col=median_col,
@@ -581,6 +590,7 @@ def render_statistical_mode() -> None:
         show_max=show_max,
         threshold_values=threshold_values,
     )
+    y_max = _round_axis_max(y_max_raw)
 
     if df_weekday is not None and not df_weekday.empty:
         fig_wd = _make_figure(
@@ -640,5 +650,5 @@ def render_statistical_mode() -> None:
         "show_99": bool(cb_99),
         "show_max": show_max,
         "y_axis_min": 0.0,
-        "y_axis_max": float(y_max * 1.05),
+        "y_axis_max": float(y_max),
     }
