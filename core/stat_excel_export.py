@@ -39,6 +39,13 @@ _EXPECTED_HEADERS = [
 _MAX_DATA_ROWS = 288
 
 _NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+_IGNORABLE_NAMESPACES = {
+    "x14ac": "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac",
+    "xr": "http://schemas.microsoft.com/office/spreadsheetml/2014/revision",
+    "xr2": "http://schemas.microsoft.com/office/spreadsheetml/2015/revision2",
+    "xr3": "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3",
+}
 ET.register_namespace("", _NS)
 ET.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
 ET.register_namespace("mc", "http://schemas.openxmlformats.org/markup-compatibility/2006")
@@ -232,7 +239,28 @@ def _write_csv_block(root: ET.Element, start_col: int, rows_data: Sequence[Seque
             _set_cell(_ensure_cell(sheet_data, rows, cells, ref), value)
 
 
+def _namespace_is_used(root: ET.Element, uri: str) -> bool:
+    marker = f"{{{uri}}}"
+    for elem in root.iter():
+        if isinstance(elem.tag, str) and elem.tag.startswith(marker):
+            return True
+        if any(str(name).startswith(marker) for name in elem.attrib):
+            return True
+    return False
+
+
+def _preserve_ignorable_namespaces(root: ET.Element) -> None:
+    # ElementTree выбрасывает неиспользуемые xmlns-декларации. Excel требует,
+    # чтобы все префиксы из mc:Ignorable оставались объявленными.
+    ignorable = root.attrib.get(f"{{{_MC_NS}}}Ignorable", "")
+    for prefix in ignorable.split():
+        uri = _IGNORABLE_NAMESPACES.get(prefix)
+        if uri and not _namespace_is_used(root, uri):
+            root.set(f"xmlns:{prefix}", uri)
+
+
 def _serialize_xml(root: ET.Element) -> bytes:
+    _preserve_ignorable_namespaces(root)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
