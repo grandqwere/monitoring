@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import csv
 import io
 import re
@@ -61,6 +62,165 @@ ET.register_namespace("c", _C_NS)
 ET.register_namespace("a", _A_NS)
 ET.register_namespace("c16", _C16_NS)
 ET.register_namespace("c16r2", _C16R2_NS)
+
+
+_PROTECTION_PASSWORD = "Monitoring1399"
+_EDITABLE_STAT_CELLS = {
+    # Режим мощности. C4:F4 — одна объединённая видимая ячейка.
+    "C4", "D4", "E4", "F4",
+    # Увеличение мощности.
+    "J4",
+    # Значения порогов и их Вкл/Выкл.
+    "B6", "C6", "E6", "F6", "H6", "I6", "K6", "L6", "M6", "O6",
+    # Медиана / 50 / 90 / 99 / Максимум.
+    "B8", "D8", "F8", "H8", "J8",
+    # Ручные границы оси Excel.
+    "C10", "G10",
+}
+
+
+def _legacy_excel_password_hash(password: str) -> str:
+    """Возвращает совместимый с Excel legacy-хэш для защиты листа/структуры."""
+    value_hash = 0
+    for idx, char in enumerate(password, 1):
+        value = ord(char) << idx
+        rotated = value >> 15
+        value &= 0x7FFF
+        value_hash ^= value | rotated
+    value_hash ^= len(password)
+    value_hash ^= 0xCE4B
+    return f"{value_hash:X}"
+
+
+def _protected_style_id(
+    styles_root: ET.Element,
+    style_id: int,
+    *,
+    locked: bool,
+    hidden: bool,
+    cache: dict[tuple[int, bool, bool], int],
+) -> int:
+    """Клонирует исходный cellXf, меняя только защиту ячейки."""
+    key = (style_id, locked, hidden)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    cell_xfs = styles_root.find(f"{{{_NS}}}cellXfs")
+    if cell_xfs is None:
+        raise ValueError("В шаблоне Excel отсутствует cellXfs.")
+    source_xfs = list(cell_xfs)
+    if not 0 <= style_id < len(source_xfs):
+        raise ValueError(f"Некорректный индекс стиля Excel: {style_id}.")
+
+    clone = copy.deepcopy(source_xfs[style_id])
+    for child in list(clone):
+        if child.tag == f"{{{_NS}}}protection":
+            clone.remove(child)
+    protection = ET.Element(
+        f"{{{_NS}}}protection",
+        {"locked": "1" if locked else "0", "hidden": "1" if hidden else "0"},
+    )
+    # В CT_Xf protection идёт после alignment и до extLst.
+    ext_list = clone.find(f"{{{_NS}}}extLst")
+    if ext_list is None:
+        clone.append(protection)
+    else:
+        clone.insert(list(clone).index(ext_list), protection)
+    clone.set("applyProtection", "1")
+    cell_xfs.append(clone)
+    cell_xfs.set("count", str(len(cell_xfs)))
+    new_id = len(cell_xfs) - 1
+    cache[key] = new_id
+    return new_id
+
+
+def _apply_cell_protection_styles(
+    styles_root: ET.Element,
+    sheet1: ET.Element,
+    sheet2: ET.Element,
+) -> None:
+    """Разблокирует только элементы формы и скрывает формулы остальных ячеек."""
+    style_cache: dict[tuple[int, bool, bool], int] = {}
+    for sheet_root, editable in ((sheet1, _EDITABLE_STAT_CELLS), (sheet2, set())):
+        _, _, cells = _sheet_cells(sheet_root)
+        for ref, cell in cells.items():
+            formula = cell.find(f"{{{_NS}}}f")
+            is_editable = ref in editable
+            if not is_editable and formula is None:
+                # Стандартное состояние Excel — locked=1; отдельный стиль не нужен.
+                continue
+            style_id = int(cell.attrib.get("s", "0"))
+            new_style_id = _protected_style_id(
+                styles_root,
+                style_id,
+                locked=not is_editable,
+                hidden=(formula is not None and not is_editable),
+                cache=style_cache,
+            )
+            cell.set("s", str(new_style_id))
+
+
+def _set_sheet_protection(
+    root: ET.Element,
+    *,
+    password_hash: str,
+    allow_unlocked_selection: bool,
+) -> None:
+    """Включает максимально жёсткую защиту листа, оставляя ввод в unlocked-ячейках."""
+    for old in root.findall(f"{{{_NS}}}sheetProtection"):
+        root.remove(old)
+
+    protection = ET.Element(
+        f"{{{_NS}}}sheetProtection",
+        {
+            "password": password_hash,
+            "sheet": "1",
+            "objects": "1",
+            "scenarios": "1",
+            "formatCells": "1",
+            "formatColumns": "1",
+            "formatRows": "1",
+            "insertColumns": "1",
+            "insertRows": "1",
+            "insertHyperlinks": "1",
+            "deleteColumns": "1",
+            "deleteRows": "1",
+            "selectLockedCells": "1",
+            "selectUnlockedCells": "0" if allow_unlocked_selection else "1",
+            "sort": "1",
+            "autoFilter": "1",
+            "pivotTables": "1",
+        },
+    )
+
+    children = list(root)
+    insert_at = 0
+    for idx, child in enumerate(children):
+        local = child.tag.rsplit("}", 1)[-1]
+        if local in {"sheetData", "sheetCalcPr"}:
+            insert_at = idx + 1
+    root.insert(insert_at, protection)
+
+
+def _protect_workbook_structure(workbook_xml: bytes, password_hash: str) -> bytes:
+    """Делает лист «Данные» VeryHidden и блокирует структуру книги паролем."""
+    text = workbook_xml.decode("utf-8")
+
+    sheet_pattern = r'(<sheet\b(?=[^>]*\bname="Данные")[^>]*?)\s+state="[^"]*"([^>]*/>)'
+    text, count = re.subn(sheet_pattern, r'\1 state="veryHidden"\2', text, count=1)
+    if count != 1:
+        raise ValueError("Не удалось перевести лист «Данные» в VeryHidden.")
+
+    text = re.sub(r'<workbookProtection\b[^>]*/>', '', text, count=1)
+    protection = (
+        f'<workbookProtection workbookPassword="{password_hash}" lockStructure="1"/>'
+    )
+    marker = "<bookViews>"
+    if marker not in text:
+        raise ValueError("В workbook.xml отсутствует bookViews.")
+    text = text.replace(marker, protection + marker, 1)
+    return text.encode("utf-8")
 
 
 def _template_path() -> Path:
@@ -651,6 +811,7 @@ def build_statistical_workbook(
     with zipfile.ZipFile(template_path, "r") as src:
         sheet1 = ET.fromstring(src.read("xl/worksheets/sheet1.xml"))
         sheet2 = ET.fromstring(src.read("xl/worksheets/sheet2.xml"))
+        styles = ET.fromstring(src.read("xl/styles.xml"))
 
         threshold_values = [int(item[1]) for item in thresholds]
         threshold_states = ["Вкл" if bool(item[0]) else "Выкл" for item in thresholds]
@@ -753,12 +914,29 @@ def build_statistical_workbook(
         _set_real_line_formulas(sheet2, weekend=True)
         _set_helper_formula_caches(sheet2, helper_values)
 
+        password_hash = _legacy_excel_password_hash(_PROTECTION_PASSWORD)
+        _apply_cell_protection_styles(styles, sheet1, sheet2)
+        _set_sheet_protection(
+            sheet1,
+            password_hash=password_hash,
+            allow_unlocked_selection=True,
+        )
+        _set_sheet_protection(
+            sheet2,
+            password_hash=password_hash,
+            allow_unlocked_selection=False,
+        )
+
         weekday_times = _time_cache(weekday_rows or [_EXPECTED_HEADERS])
         weekend_times = _time_cache(weekend_rows or [_EXPECTED_HEADERS])
         replacements = {
             "xl/worksheets/sheet1.xml": _serialize_xml(sheet1),
             "xl/worksheets/sheet2.xml": _serialize_xml(sheet2),
-            "xl/workbook.xml": _force_recalculation(src.read("xl/workbook.xml")),
+            "xl/styles.xml": _serialize_xml(styles),
+            "xl/workbook.xml": _protect_workbook_structure(
+                _force_recalculation(src.read("xl/workbook.xml")),
+                password_hash,
+            ),
             "xl/_rels/workbook.xml.rels": _remove_calc_chain_relationship(
                 src.read("xl/_rels/workbook.xml.rels")
             ),
