@@ -168,12 +168,12 @@ def _iter_intervals_for_fill(intervals: List[Tuple[str, str, str]]) -> List[Tupl
     return out
 
 
-def _round_axis_max(value: float) -> float:
-    """Округляет верхнюю границу вверх до одной значащей цифры: 546→600, 9260→10000."""
+def _round_export_axis_max(value: float) -> float:
+    """Округляет верхнюю границу только для Excel: до 10000 по 100, далее по 1000."""
     if not np.isfinite(value) or value <= 0:
         return 1.0
-    magnitude = 10.0 ** math.floor(math.log10(value))
-    return float(math.ceil(value / magnitude) * magnitude)
+    step = 100.0 if value < 10000.0 else 1000.0
+    return float(math.ceil(value / step) * step)
 
 
 def _compute_y_max(df: pd.DataFrame, cols: List[str]) -> float:
@@ -393,7 +393,7 @@ def _make_figure(
         plot_bgcolor=params["bg"],
         paper_bgcolor=params["bg"],
         yaxis=dict(
-            range=[0, y_max],
+            range=[0, y_max * 1.05],
             showgrid=True,
             gridcolor=params["grid"],
             tickformat=".0f",
@@ -590,7 +590,10 @@ def render_statistical_mode() -> None:
         show_max=show_max,
         threshold_values=threshold_values,
     )
-    y_max = _round_axis_max(y_max_raw)
+    # Масштаб графиков на сайте остаётся исходным: фактический максимум + 5%.
+    y_max = y_max_raw
+    # Для Excel используется отдельное округление верхней границы.
+    export_y_max = _round_export_axis_max(y_max_raw)
 
     if df_weekday is not None and not df_weekday.empty:
         fig_wd = _make_figure(
@@ -650,5 +653,5 @@ def render_statistical_mode() -> None:
         "show_99": bool(cb_99),
         "show_max": show_max,
         "y_axis_min": 0.0,
-        "y_axis_max": float(y_max),
+        "y_axis_max": float(export_y_max),
     }
