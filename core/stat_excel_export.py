@@ -262,13 +262,13 @@ def _protect_workbook_structure(workbook_xml: bytes, password_hash: str) -> byte
     protection = (
         f'<workbookProtection workbookPassword="{password_hash}" lockStructure="1"/>'
     )
-    # По CT_Workbook workbookProtection идёт сразу после workbookPr.
-    # Не вставляем его после extension/revision узлов: Excel строже обычного
-    # XML-парсера относится к порядку дочерних элементов workbook.xml.
-    match = re.search(r'<workbookPr\b[^>]*/>', text)
+    # В современных книгах Excel между workbookPr и bookViews могут находиться
+    # AlternateContent/revisionPtr. workbookProtection должен идти после них,
+    # непосредственно перед bookViews, иначе Excel может считать книгу повреждённой.
+    match = re.search(r'<bookViews\b', text)
     if not match:
-        raise ValueError("В workbook.xml отсутствует workbookPr.")
-    text = text[: match.end()] + protection + text[match.end() :]
+        raise ValueError("В workbook.xml отсутствует bookViews.")
+    text = text[: match.start()] + protection + text[match.start() :]
     return text.encode("utf-8")
 
 
