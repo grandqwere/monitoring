@@ -504,9 +504,14 @@ def _stat_helper_values(
             return 0.0
         return float(row[idx])
 
-    def clipped(row: Sequence[str | Decimal | None], key: str) -> float:
+    axis_span = max(axis_max - axis_min, 0.000001)
+
+    def normalized(row: Sequence[str | Decimal | None], key: str) -> float:
         value = raw_value(row, source[key]) + shift
-        return max(axis_min, min(axis_max, value))
+        return (value - axis_min) / axis_span
+
+    def clipped_normalized(row: Sequence[str | Decimal | None], key: str) -> float:
+        return max(0.0, min(1.0, normalized(row, key)))
 
     data_rows = list(rows_data[1:]) if rows_data else []
     for row_idx in range(_MAX_DATA_ROWS):
@@ -519,13 +524,13 @@ def _stat_helper_values(
                 result[col].append("#N/A")
             continue
 
-        q005 = clipped(row, "q005")
-        q05 = clipped(row, "q05")
-        q25 = clipped(row, "q25")
-        q50 = clipped(row, "q50")
-        q75 = clipped(row, "q75")
-        q95 = clipped(row, "q95")
-        q995 = clipped(row, "q995")
+        q005 = clipped_normalized(row, "q005")
+        q05 = clipped_normalized(row, "q05")
+        q25 = clipped_normalized(row, "q25")
+        q50 = clipped_normalized(row, "q50")
+        q75 = clipped_normalized(row, "q75")
+        q95 = clipped_normalized(row, "q95")
+        q995 = clipped_normalized(row, "q995")
         areas = [
             q005,
             max(0.0, q05 - q005),
@@ -534,30 +539,30 @@ def _stat_helper_values(
             max(0.0, q75 - q50),
             max(0.0, q95 - q75),
             max(0.0, q995 - q95),
-            max(0.0, axis_max - q995),
+            max(0.0, 1.0 - q995),
         ]
         for col, value in zip(area_cols, areas):
             result[col].append(value)
 
         line_values: list[str | float] = [
-            round(raw_value(row, source["q50"]) + shift, 1) if show_median else "#N/A",
-            round(raw_value(row, source["q25"]) + shift, 1) if show_50 else "#N/A",
-            round(raw_value(row, source["q75"]) + shift, 1) if show_50 else "#N/A",
-            round(raw_value(row, source["q05"]) + shift, 1) if show_90 else "#N/A",
-            round(raw_value(row, source["q95"]) + shift, 1) if show_90 else "#N/A",
-            round(raw_value(row, source["q005"]) + shift, 1) if show_99 else "#N/A",
-            round(raw_value(row, source["q995"]) + shift, 1) if show_99 else "#N/A",
-            round(raw_value(row, source["qmax"]) + shift, 1) if show_max else "#N/A",
+            normalized(row, "q50") if show_median else "#N/A",
+            normalized(row, "q25") if show_50 else "#N/A",
+            normalized(row, "q75") if show_50 else "#N/A",
+            normalized(row, "q05") if show_90 else "#N/A",
+            normalized(row, "q95") if show_90 else "#N/A",
+            normalized(row, "q005") if show_99 else "#N/A",
+            normalized(row, "q995") if show_99 else "#N/A",
+            normalized(row, "qmax") if show_max else "#N/A",
         ]
         for col, value in zip(line_cols, line_values):
             result[col].append(value)
 
         for col, (enabled, threshold) in zip(threshold_cols, thresholds):
             if bool(enabled) and int(threshold) > 0:
-                result[col].append(round(float(threshold), 1))
+                result[col].append((float(threshold) - axis_min) / axis_span)
             else:
                 result[col].append("#N/A")
-        result[constant_col].append(float(y_axis_max))
+        result[constant_col].append(1.0)
 
     return result
 
@@ -1059,20 +1064,6 @@ def build_statistical_workbook(
             weekend=True,
         )
         helper_values = {**weekday_helpers, **weekend_helpers}
-        _set_real_area_formulas(sheet2, weekend=False)
-        _set_real_area_formulas(sheet2, weekend=True)
-        _set_real_line_formulas(
-            sheet2,
-            weekend=False,
-            fifth_value_ref=fifth_value_ref,
-            fifth_state_ref=fifth_state_ref,
-        )
-        _set_real_line_formulas(
-            sheet2,
-            weekend=True,
-            fifth_value_ref=fifth_value_ref,
-            fifth_state_ref=fifth_state_ref,
-        )
         _set_helper_formula_caches(sheet2, helper_values)
 
         password_hash = _legacy_excel_password_hash(_PROTECTION_PASSWORD)
@@ -1117,7 +1108,6 @@ def build_statistical_workbook(
                 weekday_times=weekday_times,
                 weekend_times=weekend_times,
                 helper_values=helper_values,
-                real_y_axis=(float(y_axis_min), float(y_axis_max)),
             )
 
         out = io.BytesIO()
