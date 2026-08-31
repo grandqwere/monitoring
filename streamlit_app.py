@@ -115,6 +115,38 @@ def _clear_all_caches():
             del st.session_state[k]
 
 
+# Значение password_to_prefix может содержать один или несколько префиксов через ";".
+def _parse_auth_prefixes(raw_value) -> list[str]:
+    prefixes: list[str] = []
+    seen: set[str] = set()
+    for part in str(raw_value or "").split(";"):
+        prefix = part.strip()
+        if not prefix:
+            continue
+        normalized = prefix.rstrip("/")
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        prefixes.append(prefix)
+    return prefixes
+
+
+def _prefix_title(prefix: str) -> str:
+    """Первая строка description.txt; при отсутствии — имя папки объекта."""
+    clean = str(prefix or "").strip().rstrip("/")
+    if not clean:
+        return "Объект"
+    try:
+        txt = read_text_s3(f"{clean}/description.txt")
+        if txt:
+            first = txt.splitlines()[0].strip()
+            if first:
+                return first
+    except Exception:
+        pass
+    return clean.rsplit("/", 1)[-1] or clean
+
+
 # Если пользователь ещё не авторизован — показываем форму входа / демо
 if not st.session_state.get("auth_ok", False):
     st.markdown("#### Доступ")
@@ -127,12 +159,14 @@ if not st.session_state.get("auth_ok", False):
         pwd_raw = (st.session_state.get("auth_pwd") or "").strip()
         pwd_fixed = _fix_layout_ru_to_en(pwd_raw)
         pwd_fixed_rev = _fix_layout_en_to_ru(pwd_raw)
-        prefix = (mapping.get(pwd_raw) or mapping.get(pwd_fixed) or mapping.get(pwd_fixed_rev) or "").strip()
-        if prefix:
+        raw_value = mapping.get(pwd_raw) or mapping.get(pwd_fixed) or mapping.get(pwd_fixed_rev) or ""
+        prefixes = _parse_auth_prefixes(raw_value)
+        if prefixes:
             st.session_state.pop("auth_error", None)
             st.session_state["auth_ok"] = True
             st.session_state["auth_mode"] = "password"
-            st.session_state["current_prefix"] = prefix
+            st.session_state["auth_prefixes"] = prefixes
+            st.session_state["current_prefix"] = prefixes[0] if len(prefixes) == 1 else ""
             _clear_all_caches()
         else:
             st.session_state["auth_error"] = "Неверный пароль. Проверьте и попробуйте ещё раз."
@@ -144,6 +178,7 @@ if not st.session_state.get("auth_ok", False):
         st.session_state.pop("auth_error", None)
         st.session_state["auth_ok"] = True
         st.session_state["auth_mode"] = "demo"
+        st.session_state["auth_prefixes"] = [demo_prefix]
         st.session_state["current_prefix"] = demo_prefix
         _clear_all_caches()
 
@@ -163,6 +198,42 @@ if not st.session_state.get("auth_ok", False):
 
     # Пока не вошёл — дальше приложение не рисуем
     st.stop()
+
+
+# Для пароля с несколькими объектами сначала показываем выбор объекта.
+if not st.session_state.get("current_prefix"):
+    auth_prefixes = list(st.session_state.get("auth_prefixes") or [])
+    if len(auth_prefixes) == 1:
+        st.session_state["current_prefix"] = auth_prefixes[0]
+    elif len(auth_prefixes) > 1:
+        object_titles = [_prefix_title(prefix) for prefix in auth_prefixes]
+        longest = max([len(title) for title in object_titles] + [len("Выйти")])
+        button_width_px = min(max(longest * 10 + 48, 220), 1000)
+
+        st.markdown("#### Выберите объект")
+
+        def _select_object(prefix: str) -> None:
+            st.session_state["current_prefix"] = prefix
+            _clear_all_caches()
+
+        with st.container(horizontal_alignment="center"):
+            for idx, (prefix, title) in enumerate(zip(auth_prefixes, object_titles)):
+                st.button(
+                    title,
+                    key=f"auth_object_{idx}",
+                    on_click=_select_object,
+                    args=(prefix,),
+                    width=button_width_px,
+                )
+
+            if st.button("Выйти", key="auth_objects_logout", width=button_width_px):
+                st.session_state.clear()
+                st.rerun()
+        st.stop()
+    else:
+        # Защита от неконсистентного состояния сессии после изменения конфигурации.
+        st.session_state.clear()
+        st.rerun()
 
 
 # Заголовок страницы: первая строка из <current_prefix>/description.txt
@@ -383,7 +454,12 @@ if measurement_period:
 right = st.columns([0.8, 0.2])[1]
 with right:
     if st.button("Выйти", use_container_width=True):
-        st.session_state.clear()
+        auth_prefixes = list(st.session_state.get("auth_prefixes") or [])
+        if st.session_state.get("auth_mode") == "password" and len(auth_prefixes) > 1:
+            _clear_all_caches()
+            st.session_state["current_prefix"] = ""
+        else:
+            st.session_state.clear()
         st.rerun()
 
 
