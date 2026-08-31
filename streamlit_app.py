@@ -88,8 +88,8 @@ def _clear_all_caches():
     for k in [
         # hourly
         "loaded_hours", "hour_cache", "current_date", "current_hour",
-        "selected_date", "selected_day_confirmed",
-        "__daily_cache", "__daily_active_day_key",
+        "selected_date", "selected_day", "selected_day_confirmed",
+        "__daily_cache", "__daily_active_day_key", "__daily_first_entry_done",
         "refresh_daily_all", "refresh_hourly_all",
         "__pending_date", "__pending_hour",
         "__picker_redraw",
