@@ -280,7 +280,7 @@ def _plural_ru(value: int, one: str, few: str, many: str) -> str:
 
 
 def _format_duration_ru(start, end) -> str:
-    """Форматирует продолжительность периода до целых секунд."""
+    """Форматирует продолжительность периода до целых минут."""
     try:
         total_seconds = int((end - start).total_seconds())
     except Exception:
@@ -290,12 +290,11 @@ def _format_duration_ru(start, end) -> str:
 
     days, remainder = divmod(total_seconds, 86400)
     hours, remainder = divmod(remainder, 3600)
-    minutes, seconds = divmod(remainder, 60)
+    minutes = remainder // 60
     return (
         f"{days} {_plural_ru(days, 'день', 'дня', 'дней')} "
         f"{hours} {_plural_ru(hours, 'час', 'часа', 'часов')} "
-        f"{minutes} {_plural_ru(minutes, 'минута', 'минуты', 'минут')} "
-        f"{seconds} {_plural_ru(seconds, 'секунда', 'секунды', 'секунд')}"
+        f"{minutes} {_plural_ru(minutes, 'минута', 'минуты', 'минут')}"
     )
 
 
