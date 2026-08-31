@@ -270,6 +270,35 @@ def _is_demo_mode() -> bool:
         return False
 
 
+def _plural_ru(value: int, one: str, few: str, many: str) -> str:
+    value_abs = abs(int(value))
+    if value_abs % 10 == 1 and value_abs % 100 != 11:
+        return one
+    if value_abs % 10 in (2, 3, 4) and value_abs % 100 not in (12, 13, 14):
+        return few
+    return many
+
+
+def _format_duration_ru(start, end) -> str:
+    """Форматирует продолжительность периода до целых секунд."""
+    try:
+        total_seconds = int((end - start).total_seconds())
+    except Exception:
+        return ""
+    if total_seconds < 0:
+        return ""
+
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return (
+        f"{days} {_plural_ru(days, 'день', 'дня', 'дней')} "
+        f"{hours} {_plural_ru(hours, 'час', 'часа', 'часов')} "
+        f"{minutes} {_plural_ru(minutes, 'минута', 'минуты', 'минут')} "
+        f"{seconds} {_plural_ru(seconds, 'секунда', 'секунды', 'секунд')}"
+    )
+
+
 def _measurement_period_value() -> str:
     """Возвращает значение периода измерений без подписи поля."""
     if _is_demo_mode():
@@ -279,11 +308,16 @@ def _measurement_period_value() -> str:
     if not period:
         return ""
 
-    start = format_datetime_ru(period.get("start"))
-    end = format_datetime_ru(period.get("end"))
+    start_value = period.get("start")
+    end_value = period.get("end")
+    start = format_datetime_ru(start_value)
+    end = format_datetime_ru(end_value)
     if not start or not end:
         return ""
-    return f"с {start} по {end}"
+
+    duration = _format_duration_ru(start_value, end_value)
+    suffix = f", продолжительность {duration}" if duration else ""
+    return f"с {start} по {end}{suffix}"
 
 
 def _measurement_period_text() -> str:
