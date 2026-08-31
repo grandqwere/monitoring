@@ -297,13 +297,16 @@ def _make_figure(
         if not enabled.get(lbl, False):
             continue
         color = _LINE_COLORS.get(lbl, None)
+        legend_name = f"{lbl} измерений"
         if low_c in df.columns:
             fig.add_trace(
                 go.Scatter(
                     x=df.index,
                     y=df[low_c],
                     mode="lines",
-                    name=f"{lbl} (нижняя)",
+                    name=legend_name,
+                    legendgroup=lbl,
+                    showlegend=True,
                     line=dict(width=1, color=color),
                 )
             )
@@ -313,7 +316,9 @@ def _make_figure(
                     x=df.index,
                     y=df[high_c],
                     mode="lines",
-                    name=f"{lbl} (верхняя)",
+                    name=legend_name,
+                    legendgroup=lbl,
+                    showlegend=False,
                     line=dict(width=1, color=color),
                 )
             )
