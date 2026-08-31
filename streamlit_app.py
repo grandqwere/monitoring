@@ -216,7 +216,7 @@ if not st.session_state.get("current_prefix"):
             st.session_state["current_prefix"] = prefix
             _clear_all_caches()
 
-        with st.container(horizontal_alignment="center"):
+        with st.container(horizontal_alignment="left"):
             for idx, (prefix, title) in enumerate(zip(auth_prefixes, object_titles)):
                 st.button(
                     title,
