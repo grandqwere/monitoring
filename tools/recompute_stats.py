@@ -50,6 +50,9 @@ PROCESS_SETTINGS_KEY = "plot_agg_minutes"
 OUTAGE_CURRENT_COLUMNS: Tuple[str, str, str] = ("Irms_L1", "Irms_L2", "Irms_L3")
 OUTAGE_CURRENT_THRESHOLD_A = 1.0
 EXCLUDED_PROJECT_BASE_NAMES: Tuple[str, ...] = ("0.0",)
+PROJECTS_ROOT_PREFIX = "00_PROJECT/"
+DEMO_PROJECT_PREFIX = "02_SYS_PROJ/Demo/"
+CALENDAR_ROOT_PREFIX = "02_SYS_PROJ/Calendar/"
 
 # Регэкспы
 PROJECT_DIR_RE = re.compile(r".*\(\d+\)$")
@@ -155,15 +158,12 @@ def _s3_prefix_has_any_object(client, bucket: str, prefix: str) -> bool:
 
 def _is_processable_project_name(name: str) -> bool:
     """
-    Проверяет, можно ли обрабатывать проектную папку верхнего уровня.
+    Проверяет, можно ли обрабатывать проектную папку внутри 00_PROJECT/.
 
-    Обрабатываются папки вида 'Name(123)' и специальная демо-папка 'Demo'.
-    Служебные папки с базовым именем '0.0', например '0.0(1)' или '0.0(187)',
-    исключаются.
+    Обрабатываются папки вида 'Name(123)'. Служебные папки с базовым именем
+    '0.0', например '0.0(1)' или '0.0(187)', исключаются. Demo расположен
+    отдельно и добавляется в _discover_projects() явным префиксом.
     """
-    if name == "Demo":
-        return True
-
     if not PROJECT_DIR_RE.match(name):
         return False
 
@@ -172,37 +172,44 @@ def _is_processable_project_name(name: str) -> bool:
 
 def _discover_projects(client, bucket: str) -> List[str]:
     """
-    Возвращает список project_prefix вида 'Name(123)/' на верхнем уровне бакета.
-    Берём только обрабатываемые проекты, у которых есть 'All/'.
+    Возвращает полные project_prefix.
+
+    Обычные проекты ищутся внутри 00_PROJECT/, Demo — отдельно по
+    02_SYS_PROJ/Demo/. В список попадают только префиксы, где есть All/.
     """
     projects: List[str] = []
-    # Основной путь: через Delimiter "/"
     try:
-        cps = _s3_list_common_prefixes(client, bucket, prefix="", delimiter="/")
+        cps = _s3_list_common_prefixes(
+            client, bucket, prefix=PROJECTS_ROOT_PREFIX, delimiter="/"
+        )
         for p in cps:
-            name = p.rstrip("/")
+            name = p.rstrip("/").split("/")[-1]
             if not _is_processable_project_name(name):
                 continue
             if _s3_prefix_has_any_object(client, bucket, p + "All/"):
                 projects.append(p)
-        projects.sort()
-        return projects
     except Exception:
-        # Fallback: если Delimiter не поддержан — сканирование ключей.
-        # Это может быть тяжелее, но спасает на нестандартных S3.
-        rx = re.compile(r"^([^/]+)/All/\d{4}\.\d{2}\.\d{2}/")
-        objs = _s3_list_objects(client, bucket, prefix="")
+        # Fallback: если Delimiter не поддержан — сканирование ключей только
+        # внутри 00_PROJECT/.
+        rx = re.compile(
+            rf"^{re.escape(PROJECTS_ROOT_PREFIX)}([^/]+)/All/\d{{4}}\.\d{{2}}\.\d{{2}}/"
+        )
+        objs = _s3_list_objects(client, bucket, prefix=PROJECTS_ROOT_PREFIX)
         seen: Set[str] = set()
         for o in objs:
             k = o.get("Key") or ""
             m = rx.match(k)
             if not m:
                 continue
-            root = m.group(1)
-            if _is_processable_project_name(root):
-                seen.add(root + "/")
-        projects = sorted(seen)
-        return projects
+            name = m.group(1)
+            if _is_processable_project_name(name):
+                seen.add(f"{PROJECTS_ROOT_PREFIX}{name}/")
+        projects.extend(sorted(seen))
+
+    if _s3_prefix_has_any_object(client, bucket, DEMO_PROJECT_PREFIX + "All/"):
+        projects.append(DEMO_PROJECT_PREFIX)
+
+    return sorted(set(projects))
 
 def _discover_days(client, bucket: str, project_prefix: str) -> List[str]:
     """
@@ -380,11 +387,11 @@ def _holiday_set_for_project_year(
 ) -> Set[date]:
     """
     Возвращает множество выходных/праздничных дат для (project, year):
-    Calendar/calendar_<year>.json + <project>/Stat/calendar_<year>_region_*.json (если есть).
+    02_SYS_PROJ/Calendar/calendar_<year>.json + <project>/Stat/calendar_<year>_region_*.json (если есть).
     """
     # base
     if year not in base_cache:
-        base_key = f"Calendar/calendar_{year}.json"
+        base_key = f"{CALENDAR_ROOT_PREFIX}calendar_{year}.json"
         base_obj = _load_calendar_json(client, bucket, base_key)
         base_cache[year] = _parse_calendar_days(base_obj) if base_obj else set()
 
