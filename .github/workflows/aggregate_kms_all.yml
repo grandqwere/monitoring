@@ -42,12 +42,12 @@ jobs:
       S3_SIGNATURE_VERSION: ${{ secrets.S3_SIGNATURE_VERSION }}
       PYTHONUNBUFFERED: "1"
 
-      SOURCE_PREFIX_1: "KMS.110(129)/All/"
-      SOURCE_PREFIX_2: "KMS.13(85)/All/"
-      SOURCE_PREFIX_3: "KMS.210(96)/All/"
-      SOURCE_PREFIX_4: "KMS.22(121)/All/"
-      OUTPUT_PREFIX: "kms.all(0)/All/"
-      RECOVERY_REPORT_KEY: "kms.all(0)/recovery.txt"
+      SOURCE_PREFIX_1: "00_PROJECT/KMS.110(129)/All/"
+      SOURCE_PREFIX_2: "00_PROJECT/KMS.13(85)/All/"
+      SOURCE_PREFIX_3: "00_PROJECT/KMS.210(96)/All/"
+      SOURCE_PREFIX_4: "00_PROJECT/KMS.22(121)/All/"
+      OUTPUT_PREFIX: "00_PROJECT/kms.all(0)/All/"
+      RECOVERY_REPORT_KEY: "00_PROJECT/kms.all(0)/recovery.txt"
       WORK_DIR: "_kms_aggregate_work"
 
       # Schedule uses default values. Manual run may override them.
@@ -138,7 +138,7 @@ jobs:
           output_prefix = os.environ["OUTPUT_PREFIX"]
           recovery_report_key = os.environ.get(
               "RECOVERY_REPORT_KEY",
-              "kms.all(0)/recovery.txt",
+              "00_PROJECT/kms.all(0)/recovery.txt",
           ).lstrip("/")
 
           hourly_re = re.compile(
