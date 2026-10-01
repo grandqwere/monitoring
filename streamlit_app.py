@@ -116,18 +116,23 @@ def _clear_all_caches():
 
 
 # Значение password_to_prefix может содержать один или несколько префиксов через ";".
+# В Secrets имена проектов хранятся относительно 00_PROJECT/.
+_PROJECTS_ROOT_PREFIX = "00_PROJECT/"
+
 def _parse_auth_prefixes(raw_value) -> list[str]:
     prefixes: list[str] = []
     seen: set[str] = set()
     for part in str(raw_value or "").split(";"):
-        prefix = part.strip()
+        prefix = part.strip().strip("/")
         if not prefix:
             continue
+        if not prefix.startswith(_PROJECTS_ROOT_PREFIX.rstrip("/") + "/"):
+            prefix = _PROJECTS_ROOT_PREFIX + prefix
         normalized = prefix.rstrip("/")
         if normalized in seen:
             continue
         seen.add(normalized)
-        prefixes.append(prefix)
+        prefixes.append(normalized + "/")
     return prefixes
 
 
